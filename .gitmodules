@@ -1,0 +1,3 @@
+[submodule "UEFI-GPT-image-creator"]
+	path = UEFI-GPT-image-creator
+	url = https://github.com/queso-fuego/UEFI-GPT-image-creator
