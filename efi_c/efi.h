@@ -2,8 +2,17 @@
  * NOTE: void* fields in structs = not implemented!!
  */
 
+// __has_include is clang/gcc defined; But should be in C standard C2X
+#if __has_include(<uchar.h>) 
 #include <uchar.h>
+#endif
+
 #include <stdint.h>
+#include <stddef.h> // NULL
+
+#ifndef _UCHAR_H
+typedef uint_least16_t char16_t;
+#endif
 
 // Common UEFI Data Types: UEFI Spec 2.10 section 2.3.1
 typedef uint16_t    UINT16;
