@@ -2,17 +2,15 @@
 .PHONY: all clean
 
 SOURCE = efi.c
-OBJS = $(SOURCE:.c=.o)
-DEPENDS = $(OBJS:.o=.d)
 TARGET = BOOTX64.EFI
 
 # Uncomment for gcc
-CC = x86_64-w64-mingw32-gcc \
+#CC = x86_64-w64-mingw32-gcc \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
 # Uncomment for clang
-#CC = clang \
+CC = clang \
 	-target x86_64-unknown-windows \
 	-fuse-ld=lld-link \
 	-Wl,-subsystem:efi_application \
@@ -20,7 +18,6 @@ CC = x86_64-w64-mingw32-gcc \
 
 CFLAGS = \
 	-std=c17 \
-	-MMD \
 	-Wall \
 	-Wextra \
 	-Wpedantic \
@@ -29,16 +26,11 @@ CFLAGS = \
 	-nostdlib 
 
 all: $(TARGET)
-	cd ../UEFI-GPT-image-creator/; \
-	./write_gpt.exe -v; \
-	./qemu.bat
 
-$(TARGET): $(OBJS)
-	@$(CC) $(CFLAGS) -o $@ $<
+$(TARGET): $(SOURCE)
+	$(CC) $(CFLAGS) -o $@ $<
 	cp $(TARGET) ../UEFI-GPT-image-creator/
 
--include $(DEPENDS)
-
 clean:
-	rm -rf $(TARGET) *.efi *.o *.d
+	rm -rf $(TARGET)
 

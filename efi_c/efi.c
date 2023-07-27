@@ -1,34 +1,22 @@
 #include "efi.h"
 
-// EFI Image Entry Point
-EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
-    (void)ImageHandle;	// Prevent compiler warning
+// Entry Point
+EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    // TODO: Remove this line when using input parms
+    (void)ImageHandle, (void)SystemTable;   // Prevent compiler warnings
 
-    // Set text to yellow fg/ green bg
-    SystemTable->ConOut->SetAttribute(SystemTable->ConOut, 
-            EFI_TEXT_ATTR(EFI_YELLOW,EFI_GREEN)); 
+    // Reset Console Output
+    SystemTable->ConOut->Reset(SystemTable->ConOut, false);
 
-    // Clear screen to bg color 
+    // Clear console output; clear screen to background color and
+    //   set cursor to 0,0
     SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
 
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Hello, World!\r\n\r\n");
+    // Write String
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"TESTING, Hello UEFI World!\r\n");
     
-    // Set text to red fg/ black bg 
-    SystemTable->ConOut->SetAttribute(SystemTable->ConOut, 
-            EFI_TEXT_ATTR(EFI_RED,EFI_BLACK));
+    // Infinite Loop
+    while (1) ;
 
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, 
-            u"Press any key to shutdown..."); 
-
-    // Wait until keypress, then return
-    EFI_INPUT_KEY key;
-    while (SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &key) != EFI_SUCCESS)
-        ;
-    
-    // Shutdown, does not return
-    SystemTable->RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-
-    // Should never get here
     return EFI_SUCCESS;
 }
-
