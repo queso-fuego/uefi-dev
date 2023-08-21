@@ -27,6 +27,8 @@ bool print_int(INT32 number) {
     UINTN i = 0;
     const bool negative = (number < 0);
 
+    if (negative) number = -number;
+
     do {
        buffer[i++] = digits[number % 10];
        number /= 10;
@@ -171,7 +173,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     cout->ClearScreen(SystemTable->ConOut);
 
     // Printf Hex test
-    printf(u"Testing hex: %x\r\n\r\n", (UINTN)0x11223344AABBCCDD);
+    printf(u"Testing hex: %x\r\n", (UINTN)0x11223344AABBCCDD);
+
+    // Printf negative int test
+    printf(u"Testing negative int: %d\r\n\r\n", (INT32)-54321);
 
     // Write String
     cout->OutputString(SystemTable->ConOut, u"Current text mode:\r\n");
