@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h> // NULL
 
 #if __has_include(<uchar.h>)
   #include <uchar.h>
@@ -85,6 +86,64 @@ EFI_STATUS
     IN CHAR16                          *String
 );
 
+// EFI_TEXT_QUERY_MODE: UEFI Spec 2.10 section 12.4.5
+typedef
+EFI_STATUS
+(EFIAPI *EFI_TEXT_QUERY_MODE) (
+    IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+    IN UINTN                           ModeNumber,
+    OUT UINTN                          *Columns,
+    OUT UINTN                          *Rows
+);
+
+// EFI_TEXT_SET_MODE: UEFI Spec 2.10 section 12.4.6
+typedef
+EFI_STATUS
+(EFIAPI *EFI_TEXT_SET_MODE) (
+    IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+    IN UINTN                           ModeNumber
+);
+
+// EFI_TEXT_SET_ATTRIBUTE: UEFI Spec 2.10 section 12.4.7
+typedef
+EFI_STATUS
+(EFIAPI *EFI_TEXT_SET_ATTRIBUTE) (
+    IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+    IN UINTN                           Attribute
+);
+
+// Attributes (text colors)
+#define EFI_BLACK                             0x00
+#define EFI_BLUE                              0x01
+#define EFI_GREEN                             0x02
+#define EFI_CYAN                              0x03
+#define EFI_RED                               0x04
+#define EFI_MAGENTA                           0x05
+#define EFI_BROWN                             0x06
+#define EFI_LIGHTGRAY                         0x07
+#define EFI_BRIGHT                            0x08
+#define EFI_DARKGRAY (EFI_BLACK | EFI_BRIGHT) 0x08
+#define EFI_LIGHTBLUE                         0x09
+#define EFI_LIGHTGREEN                        0x0A
+#define EFI_LIGHTCYAN                         0x0B
+#define EFI_LIGHTRED                          0x0C
+#define EFI_LIGHTMAGENTA                      0x0D
+#define EFI_YELLOW                            0x0E
+#define EFI_WHITE                             0x0F
+
+// Background colors
+#define EFI_BACKGROUND_BLACK     0x00
+#define EFI_BACKGROUND_BLUE      0x10
+#define EFI_BACKGROUND_GREEN     0x20
+#define EFI_BACKGROUND_CYAN      0x30
+#define EFI_BACKGROUND_RED       0x40
+#define EFI_BACKGROUND_MAGENTA   0x50
+#define EFI_BACKGROUND_BROWN     0x60
+#define EFI_BACKGROUND_LIGHTGRAY 0x70
+
+#define EFI_TEXT_ATTR(Foreground, Background) \
+    ((Foreground) | ((Background) << 4))
+
 // EFI_TEXT_CLEAR_SCREEN: UEFI Spec 2.10 section 12.4.8
 typedef
 EFI_STATUS
@@ -92,18 +151,30 @@ EFI_STATUS
     IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This 
 );
 
+// SIMPLE_TEXT_OUTPUT_MODE
+typedef struct {
+    INT32   MaxMode;
+
+    // Current settings
+    INT32   Mode;
+    INT32   Attribute;
+    INT32   CursorColumn;
+    INT32   CursorRow;
+    BOOLEAN CursorVisible;
+} SIMPLE_TEXT_OUTPUT_MODE;
+
 // EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL: UEFI Spec 2.10 section 12.4.1
 typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
-    EFI_TEXT_RESET  Reset;
-    EFI_TEXT_STRING OutputString;
-    void *TestString;
-    void *QueryMode;
-    void *SetMode;
-    void *setAttribute;
-    EFI_TEXT_CLEAR_SCREEN ClearScreen;
-    void *SetCursorPosition;
-    void *EnableCursor;
-    void *Mode;
+    EFI_TEXT_RESET          Reset;
+    EFI_TEXT_STRING         OutputString;
+    void                    *TestString;
+    EFI_TEXT_QUERY_MODE     QueryMode;
+    EFI_TEXT_SET_MODE       SetMode;
+    EFI_TEXT_SET_ATTRIBUTE  SetAttribute;
+    EFI_TEXT_CLEAR_SCREEN   ClearScreen;
+    void                    *SetCursorPosition;
+    void                    *EnableCursor;
+    SIMPLE_TEXT_OUTPUT_MODE *Mode;
 } EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
 
 // EFI_TABLE_HEADER: UEFI Spec 2.10 section 4.2.1

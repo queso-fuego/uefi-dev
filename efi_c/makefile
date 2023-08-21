@@ -1,19 +1,32 @@
 .POSIX:
 .PHONY: all clean
 
-SOURCE = efi.c
-OBJS = $(SOURCE:.c=.o)
+SOURCES = efi.c
+OBJS = $(SOURCES:.c=.o)
 DEPENDS = $(OBJS:.o=.d)
 TARGET = BOOTX64.EFI
 
-# Uncomment for gcc
-CC = x86_64-w64-mingw32-gcc \
+# Uncomment disk image exe & shell script for Windows
+#DISK_IMG_PGM = write_gpt.exe
+#QEMU_SCRIPT = qemu.bat
+
+# Uncomment disk image exe & shell script for Linux
+DISK_IMG_PGM = write_gpt
+QEMU_SCRIPT = qemu.sh
+
+# Uncomment CC/LDFLAGS for gcc
+#CC = x86_64-w64-mingw32-gcc 
+#LDFLAGS = \
+	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
-# Uncomment for clang
-#CC = clang \
+# Uncomment CC/LDFLAGS for clang
+CC = clang \
+	-target x86_64-unknown-windows 
+LDFLAGS = \
 	-target x86_64-unknown-windows \
+	-nostdlib \
 	-fuse-ld=lld-link \
 	-Wl,-subsystem:efi_application \
 	-Wl,-entry:efi_main
@@ -25,17 +38,19 @@ CFLAGS = \
 	-Wextra \
 	-Wpedantic \
 	-mno-red-zone \
-	-ffreestanding \
-	-nostdlib 
+	-ffreestanding 
 
 all: $(TARGET)
 	cd ../UEFI-GPT-image-creator/; \
-	./write_gpt.exe -v; \
-	./qemu.bat
+	./$(DISK_IMG_PGM); \
+	./$(QEMU_SCRIPT)
 
 $(TARGET): $(OBJS)
-	@$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(LDFLAGS) -o $@ $<
 	cp $(TARGET) ../UEFI-GPT-image-creator/
+
+$(OBJS): $(SOURCES)
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 -include $(DEPENDS)
 
