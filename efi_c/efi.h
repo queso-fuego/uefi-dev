@@ -1,7 +1,10 @@
 //
 // NOTE: "void *" fields in structs = not implemented!!
 //   They are defined in the UEFI spec, but I have not used
-//   them or implemented them yet
+//   them or implemented them yet. Using void pointers 
+//   ensures they take up the same amount of space so that
+//   the actually defined functions work correctly and are 
+//   at the correct offsets.
 //
 
 #include <stdint.h>
@@ -64,8 +67,12 @@ typedef UINTN EFI_TPL;
 // EFI_STATUS Codes - UEFI Spec 2.10 Appendix D
 #define EFI_SUCCESS 0ULL
 
-// TODO: Add EFI_ERROR() macro/other for checking if EFI_STATUS
-//   high bit is set, if so it is an ERROR status
+#define TOP_BIT 0x8000000000000000
+#define ENCODE_ERROR(x) (TOP_BIT | (x))
+#define EFI_ERROR(x) ((INTN)((UINTN)(x)) < 0)
+
+#define EFI_UNSUPPORTED  ENCODE_ERROR(3)
+#define EFI_DEVICE_ERROR ENCODE_ERROR(7)
 
 // EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL
 typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
@@ -151,6 +158,15 @@ EFI_STATUS
     IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This 
 );
 
+// EFI_TEXT_SET_CURSOR_POSITION: UEFI Spec 2.10 section 12.4.9
+typedef
+EFI_STATUS
+(EFIAPI *EFI_TEXT_SET_CURSOR_POSITION) (
+    IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+    IN UINTN                           Column,
+    IN UINTN                           Row
+);
+
 // SIMPLE_TEXT_OUTPUT_MODE
 typedef struct {
     INT32   MaxMode;
@@ -165,17 +181,58 @@ typedef struct {
 
 // EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL: UEFI Spec 2.10 section 12.4.1
 typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
-    EFI_TEXT_RESET          Reset;
-    EFI_TEXT_STRING         OutputString;
-    void                    *TestString;
-    EFI_TEXT_QUERY_MODE     QueryMode;
-    EFI_TEXT_SET_MODE       SetMode;
-    EFI_TEXT_SET_ATTRIBUTE  SetAttribute;
-    EFI_TEXT_CLEAR_SCREEN   ClearScreen;
-    void                    *SetCursorPosition;
-    void                    *EnableCursor;
-    SIMPLE_TEXT_OUTPUT_MODE *Mode;
+    EFI_TEXT_RESET               Reset;
+    EFI_TEXT_STRING              OutputString;
+    void                         *TestString;
+    EFI_TEXT_QUERY_MODE          QueryMode;
+    EFI_TEXT_SET_MODE            SetMode;
+    EFI_TEXT_SET_ATTRIBUTE       SetAttribute;
+    EFI_TEXT_CLEAR_SCREEN        ClearScreen;
+    EFI_TEXT_SET_CURSOR_POSITION SetCursorPosition;
+    void                         *EnableCursor;
+    SIMPLE_TEXT_OUTPUT_MODE      *Mode;
 } EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
+
+// EFI_SIMPLE_TEXT_INPUT_PROTOCOL
+typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
+
+// EFI_INPUT_RESET: UEFI Spec 2.10 section 12.3.2
+typedef 
+EFI_STATUS
+(EFIAPI *EFI_INPUT_RESET) (
+    IN EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This,
+    IN BOOLEAN                        ExtendedVerification
+);
+
+// EFI_INPUT_KEY
+typedef struct {
+    UINT16 ScanCode;
+    CHAR16 UnicodeChar;
+} EFI_INPUT_KEY;
+
+// EFI_INPUT_RESET: UEFI Spec 2.10 section 12.3.2
+typedef 
+EFI_STATUS
+(EFIAPI *EFI_INPUT_READ_KEY) (
+    IN EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This,
+    OUT EFI_INPUT_KEY                 *Key
+);
+
+// EFI_SIMPLE_TEXT_INPUT_PROTOCOL: UEFI Spec 2.10 section 12.3.1
+typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
+    EFI_INPUT_RESET    Reset;
+    EFI_INPUT_READ_KEY ReadKeyStroke;
+    EFI_EVENT          WaitForKey;
+} EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
+
+// EFI_WAIT_FOR_EVENT: UEFI Spec 2.10 section 7.1.5
+typedef 
+EFI_STATUS
+(EFIAPI *EFI_WAIT_FOR_EVENT) (
+    IN UINTN     NumberOfEvents,
+    IN EFI_EVENT *Event,
+    OUT UINTN    *Index
+);
 
 // EFI_TABLE_HEADER: UEFI Spec 2.10 section 4.2.1
 typedef struct {
@@ -186,22 +243,113 @@ typedef struct {
     UINT32 Reserved;
 } EFI_TABLE_HEADER;
 
+// EFI_BOOT_SERVICES: UEFI Spec 2.10 section 4.4.1
+typedef struct {
+    EFI_TABLE_HEADER Hdr;
+
+    //
+    // Task Priority Services
+    //
+    void* RaiseTPL;
+    void* RestoreTPL;
+
+    //
+    // Memory Services
+    //
+    void* AllocatePages;
+    void* FreePages;
+    void* GetMemoryMap;
+    void* AllocatePool;
+    void* FreePool;
+
+    //
+    // Event & Timer Services
+    //
+    void*              CreateEvent;
+    void*              SetTimer;
+    EFI_WAIT_FOR_EVENT WaitForEvent;
+    void*              SignalEvent;
+    void*              CloseEvent;
+    void*              CheckEvent;
+
+    //
+    // Protocol Handler Services
+    //
+    void* InstallProtocolInterface;
+    void* ReinstallProtocolInterface;
+    void* UninstallProtocolInterface;
+    void* HandleProtocol;
+    VOID* Reserved;
+    void* RegisterProtocolNotify;
+    void* LocateHandle;
+    void* LocateDevicePath;
+    void* InstallConfigurationTable;
+
+    //
+    // Image Services
+    //
+    void* LoadImage;
+    void* StartImage;
+    void* Exit;
+    void* UnloadImage;
+    void* ExitBootServices;
+
+    //
+    // Miscellaneous Services
+    //
+    void* GetNextMonotonicCount;
+    void* Stall;
+    void* SetWatchdogTimer;
+
+    //
+    // DriverSupport Services
+    //
+    void* ConnectController;
+    void* DisconnectController;
+
+    //
+    // Open and Close Protocol Services
+    //
+    void* OpenProtocol;
+    void* CloseProtocol;
+    void* OpenProtocolInformation;
+
+    //
+    // Library Services
+    //
+    void* ProtocolsPerHandle;
+    void* LocateHandleBuffer;
+    void* LocateProtocol;
+    void* InstallMultipleProtocolInterfaces;
+    void* UninstallMultipleProtocolInterfaces;
+
+    //
+    // 32-bit CRC Services
+    //
+    void* CalculateCrc32;
+
+    //
+    // Miscellaneous Services
+    //
+    void* CopyMem;
+    void* SetMem;
+    void* CreateEventEx;
+} EFI_BOOT_SERVICES;
+
 // EFI_SYSTEM_TABLE: UEFI Spec 2.10 section 4.3.1
 typedef struct {
     EFI_TABLE_HEADER                Hdr;
     CHAR16                          *FirmwareVendor;
     UINT32                          FirmwareRevision;
     EFI_HANDLE                      ConsoleInHandle;
-    //EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *ConIn;
-    void                            *ConIn;
+    EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *ConIn;
     EFI_HANDLE                      ConsoleOutHandle;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
     EFI_HANDLE                      StandardErrorHandle;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *StdErr;
     //EFI_RUNTIME_SERVICES            *RuntimeServices;
     void                            *RuntimeServices;
-    //EFI_BOOT_SERVICES               *BootServices;
-    void                            *BootServices;
+    EFI_BOOT_SERVICES               *BootServices;
     UINTN                           NumberOfTableEntries;
     //EFI_CONFIGURATION_TABLE         *ConfigurationTable;
     void                            *ConfigurationTable;

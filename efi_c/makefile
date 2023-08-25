@@ -15,16 +15,16 @@ DISK_IMG_PGM = write_gpt
 QEMU_SCRIPT = qemu.sh
 
 # Uncomment CC/LDFLAGS for gcc
-#CC = x86_64-w64-mingw32-gcc 
-#LDFLAGS = \
+CC = x86_64-w64-mingw32-gcc 
+LDFLAGS = \
 	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
 # Uncomment CC/LDFLAGS for clang
-CC = clang \
+#CC = clang \
 	-target x86_64-unknown-windows 
-LDFLAGS = \
+#LDFLAGS = \
 	-target x86_64-unknown-windows \
 	-nostdlib \
 	-fuse-ld=lld-link \

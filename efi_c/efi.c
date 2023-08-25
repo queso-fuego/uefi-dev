@@ -5,17 +5,19 @@
 // Global variables
 // -----------------
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cout = NULL;  // Console output
-//EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin = NULL;   // Console input
-void  *cin = NULL;   // Console input
-//void *bs; // Boot services
+EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin = NULL;   // Console input
+EFI_BOOT_SERVICES *bs; // Boot services
 //void *rs; // Runtime services
+EFI_HANDLE image = NULL;    // Image handle
 
 // ====================
 // Set global vars
 // ====================
-void init_global_variables(EFI_SYSTEM_TABLE *systable) {
+void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     cout = systable->ConOut;
     cin = systable->ConIn;
+    bs = systable->BootServices;
+    image = handle;
 }
 
 // ================================
@@ -153,14 +155,33 @@ end:
 }
 
 // ====================
+// Get key from user
+// ====================
+EFI_INPUT_KEY get_key(void) {
+    EFI_EVENT events[1];
+    EFI_INPUT_KEY key;
+
+    key.ScanCode = 0;
+    key.UnicodeChar = u'\0';
+
+    events[0] = cin->WaitForKey;
+    UINTN index = 0;
+    bs->WaitForEvent(1, events, &index);
+
+    if (index == 0) {
+        cin->ReadKeyStroke(cin, &key);
+        return key;
+    }
+
+    return key;
+}
+
+// ====================
 // Entry Point
 // ====================
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
-    // TODO: Remove this line when using input parms
-    (void)ImageHandle, (void)SystemTable;   // Prevent compiler warnings
-
     // Initialize global variables
-    init_global_variables(SystemTable);
+    init_global_variables(ImageHandle, SystemTable);
 
     // Reset Console Output
     cout->Reset(SystemTable->ConOut, false);
@@ -168,44 +189,90 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Set text colors - foreground, background
     cout->SetAttribute(SystemTable->ConOut, EFI_TEXT_ATTR(EFI_YELLOW, EFI_BLUE));
 
-    // Clear console output; clear screen to background color and
-    //   set cursor to 0,0
-    cout->ClearScreen(SystemTable->ConOut);
+    // Screen loop
+    bool running = true;
+    while (running) {
+        // Clear console output; clear screen to background color and
+        //   set cursor to 0,0
+        cout->ClearScreen(SystemTable->ConOut);
 
-    // Printf Hex test
-    printf(u"Testing hex: %x\r\n", (UINTN)0x11223344AABBCCDD);
+        // Write String
+        cout->OutputString(SystemTable->ConOut, u"Text mode information:\r\n");
+        UINTN max_cols = 0, max_rows = 0;
 
-    // Printf negative int test
-    printf(u"Testing negative int: %d\r\n\r\n", (INT32)-54321);
+        // Get current text mode's column and row counts
+        cout->QueryMode(cout, cout->Mode->Mode, &max_cols, &max_rows);
 
-    // Write String
-    cout->OutputString(SystemTable->ConOut, u"Current text mode:\r\n");
-    UINTN max_cols = 0, max_rows = 0;
+        printf(u"Max Mode: %d\r\n"
+               u"Current Mode: %d\r\n"
+               u"Attribute: %x\r\n" 
+               u"CursorColumn: %d\r\n"
+               u"CursorRow: %d\r\n"
+               u"CursorVisible: %d\r\n"
+               u"Columns: %d\r\n"
+               u"Rows: %d\r\n\r\n",
+               cout->Mode->MaxMode,
+               cout->Mode->Mode,
+               cout->Mode->Attribute,
+               cout->Mode->CursorColumn,
+               cout->Mode->CursorRow,
+               cout->Mode->CursorVisible,
+               max_cols,
+               max_rows);
 
-    // Get current text mode's column and row counts
-    cout->QueryMode(cout, cout->Mode->Mode, &max_cols, &max_rows);
+        cout->OutputString(SystemTable->ConOut, u"Available text modes:\r\n");
 
-    printf(u"Max Mode: %d\r\n"
-           u"Current Mode: %d\r\n"
-           u"Attribute: %d\r\n" // TODO: Change to %x and print hex instead
-           u"CursorColumn: %d\r\n"
-           u"CursorRow: %d\r\n"
-           u"CursorVisible: %d\r\n"
-           u"Columns: %d\r\n"
-           u"Rows: %d\r\n\r\n",
-           cout->Mode->MaxMode,
-           cout->Mode->Mode,
-           cout->Mode->Attribute,
-           cout->Mode->CursorColumn,
-           cout->Mode->CursorRow,
-           cout->Mode->CursorVisible,
-           max_cols,
-           max_rows);
+        // Print other text mode infos
+        const INT32 max = cout->Mode->MaxMode;
+        for (INT32 i = 0; i < max; i++) {
+            cout->QueryMode(cout, i, &max_cols, &max_rows);
+            printf(u"Mode #: %d, %dx%d\r\n", i, max_cols, max_rows);
+        }
 
-    cout->OutputString(SystemTable->ConOut, u"Available text modes:\r\n");
+        // Get number from user
+        while (1) {
+            static UINTN current_mode = 0;
+            current_mode = cout->Mode->Mode;
 
-    // Infinite Loop
-    while (1) ;
+            for (UINTN i = 0; i < 79; i++) printf(u" ");
+            printf(u"\rSelect Text Mode # (0-%d): %d", max, current_mode);
+
+            // Move cursor left by 1, to overwrite the mode #
+            cout->SetCursorPosition(cout, cout->Mode->CursorColumn-1, cout->Mode->CursorRow);
+
+            EFI_INPUT_KEY key = get_key();
+
+            // Get key info
+            CHAR16 cbuf[2];
+            cbuf[0] = key.UnicodeChar;
+            cbuf[1] = u'\0';
+            //printf(u"Scancode: %x, Unicode Char: %s\r", key.ScanCode, cbuf);
+
+            // Process keystroke
+            printf(u"%s ", cbuf);
+
+            if (key.ScanCode == 0x17) {
+                // TODO: ESC Key, Quit & Shutdown
+                printf(u"\r\nSHUTTING DOWN!!!\r\n");
+                while (1);
+            }
+
+            // Choose text mode & redraw screen
+            current_mode = key.UnicodeChar - u'0';
+            EFI_STATUS status = cout->SetMode(cout, current_mode);
+            if (EFI_ERROR(status)) {
+                // Handle error
+                if (status == EFI_DEVICE_ERROR) { 
+                    printf(u"ERROR: %x; Device Error\r", status);
+                } else if (status == EFI_UNSUPPORTED) {
+                    printf(u"ERROR: %x; Mode # is invalid\r", status);
+                }
+                get_key();
+            } else {
+                break; // Successfully set new text mode, redraw screen
+            }
+        }
+    }
 
     return EFI_SUCCESS;
 }
