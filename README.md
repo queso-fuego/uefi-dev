@@ -15,8 +15,10 @@ There may eventually be other examples, such as a `load_kernel_efi` directory wi
 needed to load a kernel and/or "install" the bootloader EFI application to a target machine.
 
 ## dependencies
-- C compiler supporting `-std=C17` or later, this repo assumes `clang` or `gcc`. Windows users
-can use MinGW for gcc.
+- C compiler supporting `-std=c17` or later, and ability to output PE32+ object files. 
+This repo assumes `clang` or `x86_64-w64-mingw32-gcc` (MinGW). Windows users can use the same MinGW gcc
+compiler. Clang, through LLVM, supports other targets for cross compiling with `-target`, while gcc has
+to use a different compiler for PE files.
 - `make`
 - `qemu` with `ovmf` firmware (provided as `bios64.bin` in the "UEFI-GPT-image-creator" directory)
 
