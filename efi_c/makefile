@@ -49,9 +49,6 @@ $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $<
 	cp $(TARGET) ../UEFI-GPT-image-creator/
 
-$(OBJS): $(SOURCES)
-	$(CC) -c $(CFLAGS) -o $@ $<
-
 -include $(DEPENDS)
 
 clean:

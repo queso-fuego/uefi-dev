@@ -2,12 +2,17 @@
 #include "efi.h"
 
 // -----------------
+// Global constants
+// -----------------
+#define scancode_ESC 0x17
+
+// -----------------
 // Global variables
 // -----------------
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cout = NULL;  // Console output
 EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin = NULL;   // Console input
-EFI_BOOT_SERVICES *bs; // Boot services
-//void *rs; // Runtime services
+EFI_BOOT_SERVICES    *bs;   // Boot services
+EFI_RUNTIME_SERVICES *rs;   // Runtime services
 EFI_HANDLE image = NULL;    // Image handle
 
 // ====================
@@ -17,6 +22,7 @@ void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     cout = systable->ConOut;
     cin = systable->ConIn;
     bs = systable->BootServices;
+    rs = systable->RuntimeServices;
     image = handle;
 }
 
@@ -94,7 +100,7 @@ bool print_hex(UINTN number) {
 // Print formatted strings
 // =========================
 bool printf(CHAR16 *fmt, ...) {
-    bool result = false;
+    bool result = true;
     CHAR16 charstr[2];    // TODO: Replace initializing this with memset and use = { } initializer
     va_list args;
 
@@ -150,7 +156,6 @@ bool printf(CHAR16 *fmt, ...) {
 end:
     va_end(args);
 
-    result = true;
     return result;
 }
 
@@ -168,10 +173,7 @@ EFI_INPUT_KEY get_key(void) {
     UINTN index = 0;
     bs->WaitForEvent(1, events, &index);
 
-    if (index == 0) {
-        cin->ReadKeyStroke(cin, &key);
-        return key;
-    }
+    if (index == 0) cin->ReadKeyStroke(cin, &key);
 
     return key;
 }
@@ -251,10 +253,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             // Process keystroke
             printf(u"%s ", cbuf);
 
-            if (key.ScanCode == 0x17) {
-                // TODO: ESC Key, Quit & Shutdown
-                printf(u"\r\nSHUTTING DOWN!!!\r\n");
-                while (1);
+            if (key.ScanCode == scancode_ESC) {
+                // ESC Key, Quit & Shutdown
+                rs->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+
+                // !NOTE!: This should not return, system should power off
             }
 
             // Choose text mode & redraw screen

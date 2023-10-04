@@ -129,7 +129,7 @@ EFI_STATUS
 #define EFI_BROWN                             0x06
 #define EFI_LIGHTGRAY                         0x07
 #define EFI_BRIGHT                            0x08
-#define EFI_DARKGRAY (EFI_BLACK | EFI_BRIGHT) 0x08
+#define EFI_DARKGRAY                          0x08 // (EFI_BLACK | EFI_BRIGHT)
 #define EFI_LIGHTBLUE                         0x09
 #define EFI_LIGHTGREEN                        0x0A
 #define EFI_LIGHTCYAN                         0x0B
@@ -234,6 +234,24 @@ EFI_STATUS
     OUT UINTN    *Index
 );
 
+// EFI_RESET_TYPE: UEFI Spec 2.10 section 8.5.1
+typedef enum {
+    EfiResetCold,
+    EfiResetWarm,
+    EfiResetShutdown,
+    EfiResetPlatformSpecific
+} EFI_RESET_TYPE;
+
+// EFI_RESET_SYSTEM: UEFI Spec 2.10 section 8.5.1
+typedef
+VOID
+(EFIAPI *EFI_RESET_SYSTEM) (
+    IN EFI_RESET_TYPE ResetType,
+    IN EFI_STATUS     ResetStatus,
+    IN UINTN          DataSize,
+    IN VOID           *ResetData OPTIONAL
+);
+
 // EFI_TABLE_HEADER: UEFI Spec 2.10 section 4.2.1
 typedef struct {
     UINT64 Signature;
@@ -242,6 +260,49 @@ typedef struct {
     UINT32 CRC32;
     UINT32 Reserved;
 } EFI_TABLE_HEADER;
+
+// EFI_RUNTIME_SERVICES: UEFI Spec 2.10 section 4.5.1
+typedef struct {
+    EFI_TABLE_HEADER Hdr;
+    
+    //
+    // Time Services
+    //
+    void *GetTime;
+    void *SetTime;
+    void *GetWakeupTime;
+    void *SetWakeupTime;
+    
+    //
+    // Virtual Memory Services
+    //
+    void *SetVirtualAddressMap;
+    void *ConvertPointer;
+    
+    //
+    // Variable Services
+    //
+    void *GetVariable;
+    void *GetNextVariableName;
+    void *SetVariable;
+    
+    //
+    // Miscellaneous Services
+    //
+    void *GetNextHighMonotonicCount;
+    EFI_RESET_SYSTEM ResetSystem;
+    
+    //
+    // UEFI 2.0 Capsule Services
+    //
+    void *UpdateCapsule;
+    void *QueryCapsuleCapabilities;
+    
+    //
+    // Miscellaneous UEFI 2.0 Service
+    //
+    void *QueryVariableInfo;
+} EFI_RUNTIME_SERVICES;
 
 // EFI_BOOT_SERVICES: UEFI Spec 2.10 section 4.4.1
 typedef struct {
@@ -347,8 +408,7 @@ typedef struct {
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
     EFI_HANDLE                      StandardErrorHandle;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *StdErr;
-    //EFI_RUNTIME_SERVICES            *RuntimeServices;
-    void                            *RuntimeServices;
+    EFI_RUNTIME_SERVICES            *RuntimeServices;
     EFI_BOOT_SERVICES               *BootServices;
     UINTN                           NumberOfTableEntries;
     //EFI_CONFIGURATION_TABLE         *ConfigurationTable;
