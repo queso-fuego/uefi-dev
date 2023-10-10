@@ -1,9 +1,6 @@
 #include <stdarg.h>
 #include "efi.h"
 
-// TODO: Make "eprintf" or "fprintf" or similar function to print to StdErr
-//   instead of ConOut
-
 // -----------------
 // Global macros
 // -----------------
@@ -38,68 +35,142 @@ EFI_HANDLE image = NULL;    // Image handle
 void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     cout = systable->ConOut;
     cin = systable->ConIn;
+    //cerr = systable->StdErr; // TODO: Research why this does not work in emulation, nothing prints
+    cerr = cout;    // TEMP: Use stdout for error printing also
     bs = systable->BootServices;
     rs = systable->RuntimeServices;
     image = handle;
 }
 
 // ================================
-// Print an interger (INT32 for now)
+// Print a number to stderr
 // ================================
-bool print_int(INT32 number) {
-    const CHAR16 *digits = u"0123456789";
-    CHAR16 buffer[11];  // Enough for INT32_MAX + sign character
-    UINTN i = 0;
-    const bool negative = (number < 0);
-
-    if (negative) number = -number;
-
-    do {
-       buffer[i++] = digits[number % 10];
-       number /= 10;
-    } while (number > 0);
-
-    // Prepend minus sign if negative
-    if (negative) buffer[i++] = u'-';
-
-    // NULL terminate string
-    buffer[i--] = u'\0';
-
-    // Reverse digits in buffer before printing
-    for (UINTN j = 0; j < i; j++, i--) {
-        // Swap digits
-        UINTN temp = buffer[i];
-        buffer[i] = buffer[j];
-        buffer[j] = temp;
-    }
-
-    // Print number string
-    cout->OutputString(cout, buffer);
-
-    return true;
-}
-
-// ====================================
-// Print a hexadecimal integer (UINTN)
-// ====================================
-bool print_hex(UINTN number) {
+BOOLEAN eprint_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
     const CHAR16 *digits = u"0123456789ABCDEF";
-    CHAR16 buffer[20];  // Enough for UINTN_MAX, hopefully
+    CHAR16 buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
     UINTN i = 0;
+    BOOLEAN negative = FALSE;
+
+    if (base > 16) {
+        cerr->OutputString(cerr, u"Invalid base specified!\r\n");
+        return FALSE;    // Invalid base
+    }
+
+    // Only use and print negative numbers if decimal and signed True
+    if (base == 10 && is_signed && (INTN)number < 0) {
+       number = -(INTN)number;  // Get absolute value of correct signed value to get digits to print
+       negative = TRUE;
+    }
 
     do {
-       buffer[i++] = digits[number % 16];
-       number /= 16;
+       buffer[i++] = digits[number % base];
+       number /= base;
     } while (number > 0);
 
-    // Prepend final string with 0x
-    buffer[i++] = u'x';
-    buffer[i++] = u'0';
+    switch (base) {
+        case 2:
+            // Binary
+            buffer[i++] = u'b';
+            buffer[i++] = u'0';
+            break;
+
+        case 8:
+            // Octal
+            buffer[i++] = u'o';
+            buffer[i++] = u'0';
+            break;
+
+        case 10:
+            // Decimal
+            if (negative) buffer[i++] = u'-';
+            break;
+
+        case 16:
+            // Hexadecimal
+            buffer[i++] = u'x';
+            buffer[i++] = u'0';
+            break;
+
+        default:
+            // Maybe invalid base, but we'll go with it (no special processing)
+            break;
+    }
 
     // NULL terminate string
     buffer[i--] = u'\0';
 
-    // Reverse digits in buffer before printing
+    // Reverse buffer before printing
+    for (UINTN j = 0; j < i; j++, i--) {
+        // Swap digits
+        UINTN temp = buffer[i];
+        buffer[i] = buffer[j];
+        buffer[j] = temp;
+    }
+
+    // Print number string
+    cerr->OutputString(cerr, buffer);
+
+    return TRUE;
+}
+
+// ================================
+// Print a number to stdout
+// ================================
+BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
+    const CHAR16 *digits = u"0123456789ABCDEF";
+    CHAR16 buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
+    UINTN i = 0;
+    BOOLEAN negative = FALSE;
+
+    if (base > 16) {
+        cerr->OutputString(cerr, u"Invalid base specified!\r\n");
+        return FALSE;    // Invalid base
+    }
+
+    // Only use and print negative numbers if decimal and signed True
+    if (base == 10 && is_signed && (INTN)number < 0) {
+       number = -(INTN)number;  // Get absolute value of correct signed value to get digits to print
+       negative = TRUE;
+    }
+
+    do {
+       buffer[i++] = digits[number % base];
+       number /= base;
+    } while (number > 0);
+
+    switch (base) {
+        case 2:
+            // Binary
+            buffer[i++] = u'b';
+            buffer[i++] = u'0';
+            break;
+
+        case 8:
+            // Octal
+            buffer[i++] = u'o';
+            buffer[i++] = u'0';
+            break;
+
+        case 10:
+            // Decimal
+            if (negative) buffer[i++] = u'-';
+            break;
+
+        case 16:
+            // Hexadecimal
+            buffer[i++] = u'x';
+            buffer[i++] = u'0';
+            break;
+
+        default:
+            // Maybe invalid base, but we'll go with it (no special processing)
+            break;
+    }
+
+    // NULL terminate string
+    buffer[i--] = u'\0';
+
+    // Reverse buffer before printing
     for (UINTN j = 0; j < i; j++, i--) {
         // Swap digits
         UINTN temp = buffer[i];
@@ -110,12 +181,77 @@ bool print_hex(UINTN number) {
     // Print number string
     cout->OutputString(cout, buffer);
 
-    return true;
+    return TRUE;
 }
 
-// =========================
-// Print formatted strings
-// =========================
+// ====================================
+// Print formatted strings to stderr
+// ====================================
+bool eprintf(CHAR16 *fmt, ...) {
+    bool result = true;
+    CHAR16 charstr[2];    // TODO: Replace initializing this with memset and use = { } initializer
+    va_list args;
+
+    va_start(args, fmt);
+
+    // Initialize buffers
+    charstr[0] = u'\0', charstr[1] = u'\0';
+
+    // Print formatted string values
+    for (UINTN i = 0; fmt[i] != u'\0'; i++) {
+        if (fmt[i] == u'%') {
+            i++;
+
+            // Grab next argument type from input args, and print it
+            switch (fmt[i]) {
+                case u's': {
+                    // Print CHAR16 string; printf("%s", string)
+                    CHAR16 *string = va_arg(args, CHAR16*);
+                    cerr->OutputString(cerr, string);
+                }
+                break;
+
+                case u'd': {
+                    // Print INT32; printf("%d", number_int32)
+                    INT32 number = va_arg(args, INT32);
+                    //print_int(number);
+                    eprint_number(number, 10, TRUE);
+                }
+                break;
+
+                case u'x': {
+                    // Print hex UINTN; printf("%x", number_uintn)
+                    UINTN number = va_arg(args, UINTN);
+                    //print_hex(number);
+                    eprint_number(number, 16, FALSE);
+                }
+                break;
+
+                default:
+                    cerr->OutputString(cerr, u"Invalid format specifier: %");
+                    charstr[0] = fmt[i];
+                    cerr->OutputString(cerr, charstr);
+                    cerr->OutputString(cerr, u"\r\n");
+                    result = false;
+                    goto end;
+                    break;
+            }
+        } else {
+            // Not formatted string, print next character
+            charstr[0] = fmt[i];
+            cerr->OutputString(cerr, charstr);
+        }
+    }
+
+end:
+    va_end(args);
+
+    return result;
+}
+
+// ===================================
+// Print formatted strings to stdout
+// ===================================
 bool printf(CHAR16 *fmt, ...) {
     bool result = true;
     CHAR16 charstr[2];    // TODO: Replace initializing this with memset and use = { } initializer
@@ -143,14 +279,23 @@ bool printf(CHAR16 *fmt, ...) {
                 case u'd': {
                     // Print INT32; printf("%d", number_int32)
                     INT32 number = va_arg(args, INT32);
-                    print_int(number);
+                    //print_int(number);
+                    print_number(number, 10, TRUE);
                 }
                 break;
 
                 case u'x': {
                     // Print hex UINTN; printf("%x", number_uintn)
                     UINTN number = va_arg(args, UINTN);
-                    print_hex(number);
+                    //print_hex(number);
+                    print_number(number, 16, FALSE);
+                }
+                break;
+
+                case u'u': {
+                    // Print UINT32; printf("%u", number_uint32)
+                    UINT32 number = va_arg(args, UINT32);
+                    print_number(number, 10, FALSE);
                 }
                 break;
 
@@ -267,13 +412,13 @@ EFI_STATUS set_text_mode(void) {
             current_mode = key.UnicodeChar - u'0';
             EFI_STATUS status = cout->SetMode(cout, current_mode);
             if (EFI_ERROR(status)) {
-                // Handle error
+                // Handle errors
                 if (status == EFI_DEVICE_ERROR) { 
-                    printf(u"ERROR: %x; Device Error", status);
+                    eprintf(u"ERROR: %x; Device Error", status);
                 } else if (status == EFI_UNSUPPORTED) {
-                    printf(u"ERROR: %x; Mode # is invalid", status);
+                    eprintf(u"ERROR: %x; Mode # is invalid", status);
                 }
-                printf(u"\r\nPress any key to select again", status);
+                eprintf(u"\r\nPress any key to select again", status);
                 get_key();
 
             } 
@@ -290,6 +435,107 @@ EFI_STATUS set_text_mode(void) {
 // Set Graphics Mode
 // ====================
 EFI_STATUS set_graphics_mode(void) {
+    // Get GOP protocol via LocateProtocol()
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode_info = NULL;
+    UINTN mode_info_size = sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION);
+    EFI_STATUS status = 0;
+
+    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status)) {
+        eprintf(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
+        return status;
+    }
+
+    // Overall screen loop
+    while (true) {
+        cout->ClearScreen(cout);
+
+        // Write String
+        printf(u"Graphics mode information:\r\n");
+
+        // Get current GOP mode information
+        status = gop->QueryMode(gop, 
+                                gop->Mode->Mode, 
+                                &mode_info_size, 
+                                &mode_info);
+
+        if (EFI_ERROR(status)) {
+            eprintf(u"\r\nERROR: %x; Could not Query GOP Mode %u\r\n", status, gop->Mode->Mode);
+            return status;
+        }
+
+        // Print info
+        printf(u"Max Mode: %d\r\n"
+               u"Current Mode: %d\r\n"
+               u"WidthxHeight: %ux%u\r\n"
+               u"Framebuffer address: %x\r\n"
+               u"Framebuffer size: %u\r\n"
+               u"PixelFormat: %d\r\n"
+               u"PixelsPerScanLine: %u\r\n",
+               gop->Mode->MaxMode,
+               gop->Mode->Mode,
+               mode_info->HorizontalResolution, mode_info->VerticalResolution,
+               gop->Mode->FrameBufferBase,
+               gop->Mode->FrameBufferSize,
+               mode_info->PixelFormat,
+               mode_info->PixelsPerScanLine);
+
+        cout->OutputString(cout, u"\r\nAvailable GOP modes:\r\n");
+
+        // Print other text mode infos
+        const UINT32 max = gop->Mode->MaxMode;
+        for (UINT32 i = 0; i < max; i++) {
+            gop->QueryMode(gop, i, &mode_info_size, &mode_info);
+
+            printf(u"Mode #: %d, %dx%d\r\n", 
+                   i, mode_info->HorizontalResolution, mode_info->VerticalResolution);
+        }
+
+        // TODO: DEBUGGING
+        //while (1) ;
+
+        // Get input from user 
+        while (true) {
+            //static UINTN current_mode = 0;
+
+            EFI_INPUT_KEY key = get_key();
+
+            // Get key info
+            CHAR16 cbuf[2];
+            cbuf[0] = key.UnicodeChar;
+            cbuf[1] = u'\0';
+            //printf(u"Scancode: %x, Unicode Char: %s\r", key.ScanCode, cbuf);
+
+            // Process keystroke
+            printf(u"%s ", cbuf);
+
+            if (key.ScanCode == SCANCODE_ESC) {
+                // Go back to main menu
+                return EFI_SUCCESS;
+            }
+
+            // Choose text mode & redraw screen
+            //current_mode = key.UnicodeChar - u'0';
+            //EFI_STATUS status = cout->SetMode(cout, current_mode);
+            //if (EFI_ERROR(status)) {
+            //    // Handle errors
+            //    if (status == EFI_DEVICE_ERROR) { 
+            //        eprintf(u"ERROR: %x; Device Error", status);
+            //    } else if (status == EFI_UNSUPPORTED) {
+            //        eprintf(u"ERROR: %x; Mode # is invalid", status);
+            //    }
+            //    eprintf(u"\r\nPress any key to select again", status);
+            //    get_key();
+
+            //} 
+
+            // Set new mode, redraw screen from outer loop
+            break;
+        }
+    }
+
     return EFI_SUCCESS;
 }
 
@@ -300,8 +546,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Initialize global variables
     init_global_variables(ImageHandle, SystemTable);
 
-    // Reset Console Output
-    cout->Reset(cout, false);
+    // Reset Console Inputs/Outputs
+    cin->Reset(cin, FALSE);
+    cout->Reset(cout, FALSE);
+    cout->Reset(cerr, FALSE);
 
     // Set text colors - foreground, background
     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
@@ -309,11 +557,13 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Screen loop
     bool running = true;
     while (running) {
+        // Menu text on screen
         const CHAR16 *menu_choices[] = {
             u"Set Text Mode",
             u"Set Graphics Mode",
         };
 
+        // Functions to call for each menu option
         EFI_STATUS (*menu_funcs[])(void) = {
             set_text_mode,
             set_graphics_mode,
@@ -400,8 +650,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                         // Enter key, select choice
                         EFI_STATUS return_status = menu_funcs[current_row]();
                         if (EFI_ERROR(return_status)) {
-                            // TODO: Change to write to stderr with cerr, not cout
-                            printf(u"ERROR %x\r\n; Press any key to go back...", return_status);
+                            eprintf(u"ERROR %x\r\n; Press any key to go back...", return_status);
                             get_key();
                         }
 
