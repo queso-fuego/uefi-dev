@@ -19,6 +19,11 @@
 #define HIGHLIGHT_FG_COLOR EFI_BLUE
 #define HIGHLIGHT_BG_COLOR EFI_CYAN
 
+// EFI_GRAPHICS_OUTPUT_BLT_PIXEL values, BGRr8888
+#define px_LGRAY {0xEE,0xEE,0xEE,0x00}
+#define px_BLACK {0x00,0x00,0x00,0x00}
+#define px_BLUE  {0x98,0x00,0x00,0x00}  // EFI_BLUE
+
 // -----------------
 // Global variables
 // -----------------
@@ -28,6 +33,21 @@ EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cerr = NULL;  // Console output - stderr
 EFI_BOOT_SERVICES    *bs;   // Boot services
 EFI_RUNTIME_SERVICES *rs;   // Runtime services
 EFI_HANDLE image = NULL;    // Image handle
+
+// Mouse cursor buffer 8x8
+EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_buffer[] = {
+    px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, // Line 1
+    px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, // Line 2
+    px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_BLUE, px_BLUE, px_BLUE, px_BLUE,     // Line 3
+    px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_LGRAY, px_BLUE, px_BLUE, px_BLUE,    // Line 4
+    px_LGRAY, px_LGRAY, px_BLUE, px_LGRAY, px_LGRAY, px_LGRAY, px_BLUE, px_BLUE,    // Line 5
+    px_LGRAY, px_LGRAY, px_BLUE, px_BLUE, px_LGRAY, px_LGRAY, px_LGRAY, px_BLUE,    // Line 6
+    px_LGRAY, px_LGRAY, px_BLUE, px_BLUE, px_BLUE, px_LGRAY, px_LGRAY, px_LGRAY,    // Line 7
+    px_LGRAY, px_LGRAY, px_BLUE, px_BLUE, px_BLUE, px_BLUE, px_LGRAY, px_LGRAY,     // Line 8
+};
+
+// Buffer to save Fraembuffer data at cursor position
+EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 
 // ====================
 // Set global vars
@@ -689,11 +709,8 @@ EFI_STATUS test_mouse(void) {
     UINTN num_handles = 0;
     EFI_HANDLE *handle_buffer = NULL;
     EFI_STATUS status = 0;
-    INTN cursor_size = 8;              // Size in pixels
+    INTN cursor_size = 8;               // Size in pixels    
     INTN cursor_x = 0, cursor_y = 0;    // Mouse cursor position
-
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_px = { 0xEE, 0xEE, 0xEE, 0x00 };  // LIGHT GRAY: BGR_8888
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL bg_px     = { 0x98, 0x00, 0x00, 0x00 };  // EFI_BLUE: BGR_8888
 
     // Get GOP protocol via LocateProtocol()
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
@@ -766,16 +783,22 @@ EFI_STATUS test_mouse(void) {
     printf(u"\r\nMouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
            cursor_x, cursor_y, 0, 0, 0);
 
-    // Draw mouse cursor
+    // Draw mouse cursor, and also save underlying FB data first
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL *fb = 
         (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)gop->Mode->FrameBufferBase;
 
     for (INTN y = 0; y < cursor_size; y++) {
         for (INTN x = 0; x < cursor_size; x++) {
-            fb[(mode_info->PixelsPerScanLine * cursor_y) + cursor_x] = cursor_px;
-            fb++;
+            save_buffer[(y * cursor_size) + x] = 
+                fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)];
         }
-        fb += mode_info->PixelsPerScanLine - cursor_size;
+    }
+
+    for (INTN y = 0; y < cursor_size; y++) {
+        for (INTN x = 0; x < cursor_size; x++) {
+            EFI_GRAPHICS_OUTPUT_BLT_PIXEL csr_px = cursor_buffer[(y * cursor_size) + x];
+            fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = csr_px;
+        }
     }
 
     // Input loop
@@ -818,6 +841,8 @@ EFI_STATUS test_mouse(void) {
             if (state.RelativeMovementX > 0 && xmm == 0) xmm = 1;
             if (state.RelativeMovementY > 0 && ymm == 0) ymm = 1;
 
+            // Erase text first before reprinting
+            printf(u"                                                                      \r");
             printf(u"Mouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
                   cursor_x, cursor_y, xmm, ymm, state.LeftButton, state.RightButton);
 
@@ -825,17 +850,14 @@ EFI_STATUS test_mouse(void) {
             INT32 xres_mm = mode_info->HorizontalResolution * 0.02;
             INT32 yres_mm = mode_info->VerticalResolution   * 0.02;
 
-            // First overwrite current cursor position with screen bg color to "erase" cursor
-            // TODO: Save framebuffer data at mouse position first, then redraw that data
+            // Save framebuffer data at mouse position first, then redraw that data
             //   instead of just overwriting with background color e.g. with a blt buffer and
             //   EfiVideoToBltBuffer and EfiBltBufferToVideo
-            fb = (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)gop->Mode->FrameBufferBase;
             for (INTN y = 0; y < cursor_size; y++) {
                 for (INTN x = 0; x < cursor_size; x++) {
-                    fb[(mode_info->PixelsPerScanLine * cursor_y) + cursor_x] = bg_px;
-                    fb++;
+                    fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = 
+                        save_buffer[(y * cursor_size) + x];
                 }
-                fb += mode_info->PixelsPerScanLine - cursor_size;
             }
 
             cursor_x += (xres_mm * xmm);
@@ -847,16 +869,26 @@ EFI_STATUS test_mouse(void) {
             if (cursor_y < 0) cursor_y = 0;
             if (cursor_y > yres - cursor_size) cursor_y = yres - cursor_size;
 
-            fb = (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)gop->Mode->FrameBufferBase;
+            // Save FB data at new cursor position before drawing over it
             for (INTN y = 0; y < cursor_size; y++) {
                 for (INTN x = 0; x < cursor_size; x++) {
-                    fb[(mode_info->PixelsPerScanLine * cursor_y) + cursor_x] = cursor_px;
-                    fb++;
+                    save_buffer[(y * cursor_size) + x] = 
+                        fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)];
                 }
-                fb += mode_info->PixelsPerScanLine - cursor_size;
+            }
+
+            // Then draw cursor
+            for (INTN y = 0; y < cursor_size; y++) {
+                for (INTN x = 0; x < cursor_size; x++) {
+                    EFI_GRAPHICS_OUTPUT_BLT_PIXEL csr_px = cursor_buffer[(y * cursor_size) + x];
+                    fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = csr_px;
+                }
             }
         }
     }
+
+    // Free memory pool allocated by LocateHandleBuffer()
+    bs->FreePool(handle_buffer);
 
     return EFI_SUCCESS;
 }
