@@ -214,15 +214,34 @@ bool eprintf(CHAR16 *fmt, ...) {
                 case u'd': {
                     // Print INT32; printf("%d", number_int32)
                     INT32 number = va_arg(args, INT32);
-                    //print_int(number);
                     eprint_number(number, 10, TRUE);
+                }
+                break;
+
+                case u'u': {
+                    // Print UINT32; printf("%u", number_uint32)
+                    UINT32 number = va_arg(args, UINT32);
+                    eprint_number(number, 10, FALSE);
+                }
+                break;
+
+                case u'b': {
+                    // Print UINTN as binary; printf("%b", number_uintn)
+                    UINTN number = va_arg(args, UINTN);
+                    eprint_number(number, 2, FALSE);
+                }
+                break;
+
+                case u'o': {
+                    // Print UINTN as octal; printf("%o", number_uintn)
+                    UINTN number = va_arg(args, UINTN);
+                    eprint_number(number, 8, FALSE);
                 }
                 break;
 
                 case u'x': {
                     // Print hex UINTN; printf("%x", number_uintn)
                     UINTN number = va_arg(args, UINTN);
-                    //print_hex(number);
                     eprint_number(number, 16, FALSE);
                 }
                 break;
@@ -296,6 +315,20 @@ bool printf(CHAR16 *fmt, ...) {
                     // Print UINT32; printf("%u", number_uint32)
                     UINT32 number = va_arg(args, UINT32);
                     print_number(number, 10, FALSE);
+                }
+                break;
+
+                case u'b': {
+                    // Print UINTN as binary; printf("%b", number_uintn)
+                    UINTN number = va_arg(args, UINTN);
+                    eprint_number(number, 2, FALSE);
+                }
+                break;
+
+                case u'o': {
+                    // Print UINTN as octal; printf("%o", number_uintn)
+                    UINTN number = va_arg(args, UINTN);
+                    eprint_number(number, 8, FALSE);
                 }
                 break;
 
@@ -509,6 +542,12 @@ EFI_STATUS set_graphics_mode(void) {
 
         // Get all available GOP modes' info
         const UINT32 max = gop->Mode->MaxMode;
+        if (max < menu_len) {
+            // Bound menu by actual # of available modes
+            menu_bottom = menu_top + max;
+            menu_len = menu_bottom - menu_top - 1;  // Limit # of modes in menu to max mode - 1
+        }
+
         for (UINT32 i = 0; i < ARRAY_SIZE(gop_modes) && i < max; i++) {
             gop->QueryMode(gop, i, &mode_info_size, &mode_info);
 
@@ -640,6 +679,188 @@ EFI_STATUS set_graphics_mode(void) {
     return EFI_SUCCESS;
 }
 
+// ===============================================================
+// Test mouse & cursor support with Simple Pointer Protocol (SPP)
+// ===============================================================
+EFI_STATUS test_mouse(void) {
+    // Get SPP protocol via LocateHandleBuffer()
+    EFI_GUID spp_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
+    EFI_SIMPLE_POINTER_PROTOCOL *spp = NULL;
+    UINTN num_handles = 0;
+    EFI_HANDLE *handle_buffer = NULL;
+    EFI_STATUS status = 0;
+    INTN cursor_size = 8;              // Size in pixels
+    INTN cursor_x = 0, cursor_y = 0;    // Mouse cursor position
+
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_px = { 0xEE, 0xEE, 0xEE, 0x00 };  // LIGHT GRAY: BGR_8888
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL bg_px     = { 0x98, 0x00, 0x00, 0x00 };  // EFI_BLUE: BGR_8888
+
+    // Get GOP protocol via LocateProtocol()
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode_info = NULL;
+    UINTN mode_info_size = sizeof(EFI_GRAPHICS_OUTPUT_MODE_INFORMATION);
+    UINTN mode_index = 0;   // Current mode within entire menu of GOP mode choices;
+
+    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status)) {
+        eprintf(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
+        return status;
+    }
+
+    gop->QueryMode(gop, mode_index, &mode_info_size, &mode_info);
+
+    // Use LocateHandleBuffer() to find all SPPs 
+    status = bs->LocateHandleBuffer(ByProtocol, &spp_guid, NULL, &num_handles, &handle_buffer);
+    if (EFI_ERROR(status)) {
+        eprintf(u"\r\nERROR: %x; Could not locate Simple Pointer Protocol handle buffer.\r\n", status);
+        return status;
+    }
+
+    cout->ClearScreen(cout);
+
+    BOOLEAN found_mode = FALSE;
+
+    // Open all SPP protocols for each handle, until we get a valid one we can use
+    for (UINTN i = 0; i < num_handles; i++) {
+        status = bs->OpenProtocol(handle_buffer[i], 
+                                  &spp_guid,
+                                  (VOID **)&spp,
+                                  image,
+                                  NULL,
+                                  EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+
+        if (EFI_ERROR(status)) {
+            eprintf(u"\r\nERROR: %x; Could not Open Simple Pointer Protocol on handle.\r\n", status);
+            return status;
+        }
+
+        // Print initial SPP mode info
+        printf(u"SPP %u; Resolution X: %u, Y: %u, Z: %u, LButton: %u, RButton: %u\r\n",
+               i,
+               spp->Mode->ResolutionX, 
+               spp->Mode->ResolutionY,
+               spp->Mode->ResolutionZ,
+               spp->Mode->LeftButton, 
+               spp->Mode->RightButton);
+
+        if (spp->Mode->ResolutionX < 65536) {
+            found_mode = TRUE;
+            break; // Found a valid mode
+        }
+    }
+    
+    if (!found_mode) {
+        eprintf(u"\r\nERROR: Could not find any valid SPP Mode.\r\n");
+        get_key();
+        return 1;
+    }
+
+    // Found valid SPP mode, get mouse input
+    // Start off in middle of screen
+    INT32 xres = mode_info->HorizontalResolution, yres = mode_info->VerticalResolution;
+    cursor_x = (xres / 2) - (cursor_size / 2);
+    cursor_y = (yres / 2) - (cursor_size / 2);
+
+    // Print initial mouse state & draw initial cursor
+    printf(u"\r\nMouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
+           cursor_x, cursor_y, 0, 0, 0);
+
+    // Draw mouse cursor
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *fb = 
+        (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)gop->Mode->FrameBufferBase;
+
+    for (INTN y = 0; y < cursor_size; y++) {
+        for (INTN x = 0; x < cursor_size; x++) {
+            fb[(mode_info->PixelsPerScanLine * cursor_y) + cursor_x] = cursor_px;
+            fb++;
+        }
+        fb += mode_info->PixelsPerScanLine - cursor_size;
+    }
+
+    // Input loop
+    while (1) {
+        EFI_EVENT events[2] = { cin->WaitForKey, spp->WaitForInput };
+        UINTN index = 0;
+
+        bs->WaitForEvent(2, events, &index);
+        if (index == 0) {
+            // Keypress
+            EFI_INPUT_KEY key = { 0 };
+            cin->ReadKeyStroke(cin, &key);
+
+            if (key.ScanCode == SCANCODE_ESC) {
+                // ESC Key, leave and go back to main menu
+                break;
+            }
+
+        } else if (index == 1) {
+            // Mouse event
+            // Get mouse state
+            EFI_SIMPLE_POINTER_STATE state = { 0 };
+            spp->GetState(spp, &state);
+
+            // Print current info
+            // Movement is spp state's RelativeMovement / spp mode's Resolution
+            //   movement amount is in mm; 1mm = 2% of horizontal or vertical
+            //   resolution
+            //float xmm_float = (float)state.RelativeMovementX / (float)spp->Mode->ResolutionX;
+            //float ymm_float = (float)state.RelativeMovementY / (float)spp->Mode->ResolutionY;
+            //INT32 xmm = (INT32)xmm_float;
+            //INT32 ymm = (INT32)ymm_float;
+
+            INT32 xmm = state.RelativeMovementX / spp->Mode->ResolutionX;
+            INT32 ymm = state.RelativeMovementY / spp->Mode->ResolutionY;
+
+            // If moved a tiny bit, show that on screen for a small minimum amount
+            //if (xmm_float > 0.0 && xmm == 0) xmm = 1;
+            //if (ymm_float > 0.0 && ymm == 0) ymm = 1;
+            if (state.RelativeMovementX > 0 && xmm == 0) xmm = 1;
+            if (state.RelativeMovementY > 0 && ymm == 0) ymm = 1;
+
+            printf(u"Mouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
+                  cursor_x, cursor_y, xmm, ymm, state.LeftButton, state.RightButton);
+
+            // Draw cursor: Get pixel amount to move per mm
+            INT32 xres_mm = mode_info->HorizontalResolution * 0.02;
+            INT32 yres_mm = mode_info->VerticalResolution   * 0.02;
+
+            // First overwrite current cursor position with screen bg color to "erase" cursor
+            // TODO: Save framebuffer data at mouse position first, then redraw that data
+            //   instead of just overwriting with background color e.g. with a blt buffer and
+            //   EfiVideoToBltBuffer and EfiBltBufferToVideo
+            fb = (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)gop->Mode->FrameBufferBase;
+            for (INTN y = 0; y < cursor_size; y++) {
+                for (INTN x = 0; x < cursor_size; x++) {
+                    fb[(mode_info->PixelsPerScanLine * cursor_y) + cursor_x] = bg_px;
+                    fb++;
+                }
+                fb += mode_info->PixelsPerScanLine - cursor_size;
+            }
+
+            cursor_x += (xres_mm * xmm);
+            cursor_y += (yres_mm * ymm);
+
+            // Keep cursor in screen bounds
+            if (cursor_x < 0) cursor_x = 0;
+            if (cursor_x > xres - cursor_size) cursor_x = xres - cursor_size;
+            if (cursor_y < 0) cursor_y = 0;
+            if (cursor_y > yres - cursor_size) cursor_y = yres - cursor_size;
+
+            fb = (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)gop->Mode->FrameBufferBase;
+            for (INTN y = 0; y < cursor_size; y++) {
+                for (INTN x = 0; x < cursor_size; x++) {
+                    fb[(mode_info->PixelsPerScanLine * cursor_y) + cursor_x] = cursor_px;
+                    fb++;
+                }
+                fb += mode_info->PixelsPerScanLine - cursor_size;
+            }
+        }
+    }
+
+    return EFI_SUCCESS;
+}
+
 // ====================
 // Entry Point
 // ====================
@@ -662,12 +883,14 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         const CHAR16 *menu_choices[] = {
             u"Set Text Mode",
             u"Set Graphics Mode",
+            u"Test Mouse",
         };
 
         // Functions to call for each menu option
         EFI_STATUS (*menu_funcs[])(void) = {
             set_text_mode,
             set_graphics_mode,
+            test_mouse,
         };
 
         // Clear console output; clear screen to background color and

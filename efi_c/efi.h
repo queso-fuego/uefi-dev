@@ -74,6 +74,10 @@ typedef UINT64 EFI_VIRTUAL_ADDRESS;
 {0x9042a9de,0x23dc,0x4a38,\
  0x96,0xfb,{0x7a,0xde,0xd0,0x80,0x51,0x6a}}
 
+#define EFI_SIMPLE_POINTER_PROTOCOL_GUID \
+{0x31878c87,0xb75,0x11d5,\
+0x9a,0x4f,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
+
 // EFI_STATUS Codes - UEFI Spec 2.10 Appendix D
 #define EFI_SUCCESS 0ULL
 
@@ -345,6 +349,76 @@ typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
     EFI_EVENT          WaitForKey;
 } EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
 
+// EFI_SIMPLE_POINTER_PROTOCOL
+typedef struct EFI_SIMPLE_POINTER_PROTOCOL EFI_SIMPLE_POINTER_PROTOCOL;
+
+// EFI_SIMPLE_POINTER_RESET: UEFI Spec 2.10 section 12.5.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SIMPLE_POINTER_RESET) (
+    IN EFI_SIMPLE_POINTER_PROTOCOL *This,
+    IN BOOLEAN                     ExtendedVerification
+);
+
+// EFI_SIMPLE_POINTER_STATE
+typedef struct {
+    INT32 RelativeMovementX;
+    INT32 RelativeMovementY;
+    INT32 RelativeMovementZ;
+    BOOLEAN LeftButton;
+    BOOLEAN RightButton;
+} EFI_SIMPLE_POINTER_STATE;
+
+// EFI_SIMPLE_POINTER_GET_STATE: UEFI Spec 2.10 section 12.5.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SIMPLE_POINTER_GET_STATE) (
+    IN EFI_SIMPLE_POINTER_PROTOCOL *This,
+    OUT EFI_SIMPLE_POINTER_STATE   *State
+);
+
+// EFI_SIMPLE_POINTER_MODE
+typedef struct {
+    UINT64  ResolutionX;
+    UINT64  ResolutionY;
+    UINT64  ResolutionZ;
+    BOOLEAN LeftButton;
+    BOOLEAN RightButton;
+} EFI_SIMPLE_POINTER_MODE;
+
+// EFI_SIMPLE_POINTER_PROTOCOL: UEFI Spec 2.10 section 12.5
+typedef struct EFI_SIMPLE_POINTER_PROTOCOL {
+    EFI_SIMPLE_POINTER_RESET     Reset;
+    EFI_SIMPLE_POINTER_GET_STATE GetState;
+    EFI_EVENT                    WaitForInput;
+    EFI_SIMPLE_POINTER_MODE      *Mode;
+} EFI_SIMPLE_POINTER_PROTOCOL;
+
+// EFI_FREE_POOL: UEFI Spec 2.10 section 7.2.5
+typedef
+EFI_STATUS
+(EFIAPI *EFI_FREE_POOL) (
+    IN VOID *Buffer
+);
+
+// EFI_LOCATE_SEARCH_TYPE 
+typedef enum {
+    AllHandles,
+    ByRegisterNotify,
+    ByProtocol
+} EFI_LOCATE_SEARCH_TYPE;
+
+// EFI_LOCATE_HANDLE_BUFFER: UEFI Spec 2.10 section 7.3.15
+typedef
+EFI_STATUS
+(EFIAPI *EFI_LOCATE_HANDLE_BUFFER) (
+    IN EFI_LOCATE_SEARCH_TYPE SearchType,
+    IN EFI_GUID               *Protocol OPTIONAL,
+    IN VOID                   *SearchKey OPTIONAL,
+    OUT UINTN                 *NoHandles,
+    OUT EFI_HANDLE            **Buffer
+);
+
 // EFI_WAIT_FOR_EVENT: UEFI Spec 2.10 section 7.1.5
 typedef 
 EFI_STATUS
@@ -353,6 +427,25 @@ EFI_STATUS
     IN EFI_EVENT *Event,
     OUT UINTN    *Index
 );
+
+// EFI_OPEN_PROTOCOL: UEFI Spec 2.10 section 7.3.9
+typedef
+EFI_STATUS
+(EFIAPI *EFI_OPEN_PROTOCOL) (
+    IN EFI_HANDLE Handle,
+    IN EFI_GUID *Protocol,
+    OUT VOID **Interface OPTIONAL,
+    IN EFI_HANDLE AgentHandle,
+    IN EFI_HANDLE ControllerHandle,
+    IN UINT32 Attributes
+);
+
+#define EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL  0x00000001
+#define EFI_OPEN_PROTOCOL_GET_PROTOCOL        0x00000002
+#define EFI_OPEN_PROTOCOL_TEST_PROTOCOL       0x00000004
+#define EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER 0x00000008
+#define EFI_OPEN_PROTOCOL_BY_DRIVER           0x00000010
+#define EFI_OPEN_PROTOCOL_EXCLUSIVE           0x00000020
 
 // EFI_RESET_TYPE: UEFI Spec 2.10 section 8.5.1
 typedef enum {
@@ -437,11 +530,11 @@ typedef struct {
     //
     // Memory Services
     //
-    void* AllocatePages;
-    void* FreePages;
-    void* GetMemoryMap;
-    void* AllocatePool;
-    void* FreePool;
+    void*         AllocatePages;
+    void*         FreePages;
+    void*         GetMemoryMap;
+    void*         AllocatePool;
+    EFI_FREE_POOL FreePool;
 
     //
     // Event & Timer Services
@@ -491,18 +584,18 @@ typedef struct {
     //
     // Open and Close Protocol Services
     //
-    void* OpenProtocol;
+    EFI_OPEN_PROTOCOL OpenProtocol;
     void* CloseProtocol;
     void* OpenProtocolInformation;
 
     //
     // Library Services
     //
-    void*               ProtocolsPerHandle;
-    void*               LocateHandleBuffer;
-    EFI_LOCATE_PROTOCOL LocateProtocol;
-    void*               InstallMultipleProtocolInterfaces;
-    void*               UninstallMultipleProtocolInterfaces;
+    void*                    ProtocolsPerHandle;
+    EFI_LOCATE_HANDLE_BUFFER LocateHandleBuffer;
+    EFI_LOCATE_PROTOCOL      LocateProtocol;
+    void*                    InstallMultipleProtocolInterfaces;
+    void*                    UninstallMultipleProtocolInterfaces;
 
     //
     // 32-bit CRC Services
