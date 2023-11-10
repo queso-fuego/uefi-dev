@@ -564,8 +564,8 @@ EFI_STATUS set_graphics_mode(void) {
         const UINT32 max = gop->Mode->MaxMode;
         if (max < menu_len) {
             // Bound menu by actual # of available modes
-            menu_bottom = menu_top + max;
-            menu_len = menu_bottom - menu_top - 1;  // Limit # of modes in menu to max mode - 1
+            menu_bottom = menu_top + max-1;
+            menu_len = menu_bottom - menu_top;  // Limit # of modes in menu to max mode - 1
         }
 
         for (UINT32 i = 0; i < ARRAY_SIZE(gop_modes) && i < max; i++) {
