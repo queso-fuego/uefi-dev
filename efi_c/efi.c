@@ -318,7 +318,7 @@ bool printf(CHAR16 *fmt, ...) {
                 case u'c': {
                     // Print CHAR16 value; printf("%c", char)
                     charstr[0] = va_arg(args, int); // Compiler warning says to do this
-                    cerr->OutputString(cerr, charstr);
+                    cout->OutputString(cout, charstr);
                 }
                 break;
 
