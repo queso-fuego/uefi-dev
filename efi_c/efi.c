@@ -224,6 +224,13 @@ bool eprintf(CHAR16 *fmt, ...) {
 
             // Grab next argument type from input args, and print it
             switch (fmt[i]) {
+                case u'c': {
+                    // Print CHAR16 value; printf("%c", char)
+                    charstr[0] = va_arg(args, int); // Compiler warning says to do this
+                    cerr->OutputString(cerr, charstr);
+                }
+                break;
+
                 case u's': {
                     // Print CHAR16 string; printf("%s", string)
                     CHAR16 *string = va_arg(args, CHAR16*);
@@ -308,6 +315,13 @@ bool printf(CHAR16 *fmt, ...) {
 
             // Grab next argument type from input args, and print it
             switch (fmt[i]) {
+                case u'c': {
+                    // Print CHAR16 value; printf("%c", char)
+                    charstr[0] = va_arg(args, int); // Compiler warning says to do this
+                    cerr->OutputString(cerr, charstr);
+                }
+                break;
+
                 case u's': {
                     // Print CHAR16 string; printf("%s", string)
                     CHAR16 *string = va_arg(args, CHAR16*);
@@ -893,6 +907,44 @@ EFI_STATUS test_mouse(void) {
     return EFI_SUCCESS;
 }
 
+// ===========================================================
+// Timer function to print current date/time every 1 second
+// ===========================================================
+VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
+    (VOID)event; // Suppress compiler warning
+
+    // Timer context will be the text mode screen bounds
+    typedef struct {
+        UINT32 rows; 
+        UINT32 cols;
+    } Timer_Context;
+
+    Timer_Context context = *(Timer_Context *)Context;
+
+    // Save current cursor position before printing date/time
+    UINT32 save_col = cout->Mode->CursorColumn, save_row = cout->Mode->CursorRow;
+
+    // Get current date/time
+    EFI_TIME time = {0};
+    EFI_TIME_CAPABILITIES capabilities = {0};
+    rs->GetTime(&time, &capabilities);
+
+    // Move cursor to print in lower right corner
+    cout->SetCursorPosition(cout, context.cols-20, context.rows-1);
+
+    // Print current date/time
+    printf(u"%u-%c%u-%c%u %c%u:%c%u:%c%u",
+            time.Year, 
+            time.Month  < 10 ? u'0' : u'\0', time.Month,
+            time.Day    < 10 ? u'0' : u'\0', time.Day,
+            time.Hour   < 10 ? u'0' : u'\0', time.Hour,
+            time.Minute < 10 ? u'0' : u'\0', time.Minute,
+            time.Second < 10 ? u'0' : u'\0', time.Second);
+
+    // Restore cursor position
+    cout->SetCursorPosition(cout, save_col, save_row);
+}
+
 // ====================
 // Entry Point
 // ====================
@@ -907,6 +959,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     // Set text colors - foreground, background
     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+
+    // Disable Watchdog Timer
+    bs->SetWatchdogTimer(0, 0x10000, 0, NULL);
 
     // Screen loop
     bool running = true;
@@ -932,6 +987,28 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         // Get current text mode ColsxRows values
         UINTN cols = 0, rows = 0;
         cout->QueryMode(cout, cout->Mode->Mode, &cols, &rows);
+
+        // Timer context will be the text mode screen bounds
+        typedef struct {
+            UINT32 rows; 
+            UINT32 cols;
+        } Timer_Context;
+
+        Timer_Context context = {0};
+        context.rows = rows;
+        context.cols = cols;
+
+        EFI_EVENT timer_event;
+
+        // Create timer event, to print date/time on screen every ~1second
+        bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL,
+                        TPL_CALLBACK, 
+                        print_datetime,
+                        (VOID *)&context,
+                        &timer_event);
+
+        // Set Timer for the timer event to run every 1 second (in 100ns units)
+        bs->SetTimer(timer_event, TimerPeriodic, 10000000);
 
         // Print keybinds at bottom of screen
         cout->SetCursorPosition(cout, 0, rows-3);
@@ -995,6 +1072,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     break;
 
                 case SCANCODE_ESC:
+                    // Close Timer Event for cleanup
+                    bs->CloseEvent(timer_event);
+
                     // Escape key: power off
                     rs->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
 

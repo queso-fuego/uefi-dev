@@ -419,6 +419,74 @@ EFI_STATUS
     OUT EFI_HANDLE            **Buffer
 );
 
+// EFI_EVENT_NOTIFY
+typedef
+VOID
+(EFIAPI *EFI_EVENT_NOTIFY) (
+    IN EFI_EVENT Event,
+    IN VOID      *Context
+);
+
+// EFI_CREATE_EVENT: UEFI Spec 2.10 section 7.1.1
+typedef
+EFI_STATUS
+(EFIAPI *EFI_CREATE_EVENT) (
+    IN UINT32           Type,
+    IN EFI_TPL          NotifyTpl,
+    IN EFI_EVENT_NOTIFY NotifyFunction OPTIONAL,
+    IN VOID             *NotifyContext OPTIONAL,
+    OUT EFI_EVENT       *Event
+);
+
+// EFI_TPL Levels (Task priority levels)
+#define TPL_APPLICATION 4   // 0b00000100
+#define TPL_CALLBACK    8   // 0b00001000
+#define TPL_NOTIFY      16  // 0b00010000
+#define TPL_HIGH_LEVEL  31  // 0b00011111
+
+// EFI_EVENT types 
+// These types can be "ORed" together as needed - for example,
+// EVT_TIMER might be "ORed" with EVT_NOTIFY_WAIT or EVT_NOTIFY_SIGNAL.
+#define EVT_TIMER                         0x80000000
+#define EVT_RUNTIME                       0x40000000
+#define EVT_NOTIFY_WAIT                   0x00000100
+#define EVT_NOTIFY_SIGNAL                 0x00000200
+#define EVT_SIGNAL_EXIT_BOOT_SERVICES     0x00000201
+#define EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE 0x60000202
+
+// EFI_TIMER_DELAY
+typedef enum {
+    TimerCancel,
+    TimerPeriodic,
+    TimerRelative
+} EFI_TIMER_DELAY;
+
+// EFI_SET_TIMER: UEFI Spec 2.10 section 7.1.7
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SET_TIMER) (
+    IN EFI_EVENT       Event,
+    IN EFI_TIMER_DELAY Type,
+    IN UINT64          TriggerTime
+);
+
+// EFI_CLOSE_EVENT: UEFI Spec 2.10 section 7.1.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_CLOSE_EVENT) (
+    IN EFI_EVENT Event
+);
+
+// EFI_SET_WATCHDOG_TIMER: UEFI Spec 2.10 7.5.1
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SET_WATCHDOG_TIMER) (
+    IN UINTN  Timeout,
+    IN UINT64 WatchdogCode,
+    IN UINTN  DataSize,
+    IN CHAR16 *WatchdogData OPTIONAL
+);
+
 // EFI_WAIT_FOR_EVENT: UEFI Spec 2.10 section 7.1.5
 typedef 
 EFI_STATUS
@@ -465,6 +533,43 @@ VOID
     IN VOID           *ResetData OPTIONAL
 );
 
+// EFI_TIME
+typedef struct {
+    UINT16 Year;       // 1900 - 9999
+    UINT8  Month;      // 1 - 12
+    UINT8  Day;        // 1 - 31
+    UINT8  Hour;       // 0 - 23
+    UINT8  Minute;     // 0 - 59
+    UINT8  Second;     // 0 - 59
+    UINT8  Pad1; 
+    UINT32 Nanosecond; // 0 - 999,999,999
+    INT16  TimeZone;   // --1440 to 1440 or 2047
+    UINT8  Daylight;
+    UINT8  Pad2;
+} EFI_TIME;
+
+// Bit Definitions for EFI_TIME.Daylight
+#define EFI_TIME_ADJUST_DAYLIGHT 0x01
+#define EFI_TIME_IN_DAYLIGHT     0x02
+
+// Value Definition for EFI_TIME.TimeZone
+#define EFI_UNSPECIFIED_TIMEZONE 0x07FF
+
+// EFI_TIME_CAPABILITIES
+typedef struct {
+    UINT32 Resolution;  // Resolution in counts/second e.g. 1hz = 1
+    UINT32 Accuracy;    // Error rate of parts per million (1e-6)
+    BOOLEAN SetsToZero; // TRUE = time set clears the time below the resolution level
+} EFI_TIME_CAPABILITIES;
+
+// EFI_GET_TIME: UEFI Spec 2.10 section 8.3.1
+typedef
+EFI_STATUS
+(EFIAPI *EFI_GET_TIME) (
+    OUT EFI_TIME              *Time,
+    OUT EFI_TIME_CAPABILITIES *Capabilities OPTIONAL
+);
+
 // EFI_TABLE_HEADER: UEFI Spec 2.10 section 4.2.1
 typedef struct {
     UINT64 Signature;
@@ -481,7 +586,7 @@ typedef struct {
     //
     // Time Services
     //
-    void *GetTime;
+    EFI_GET_TIME GetTime;
     void *SetTime;
     void *GetWakeupTime;
     void *SetWakeupTime;
@@ -539,11 +644,11 @@ typedef struct {
     //
     // Event & Timer Services
     //
-    void*              CreateEvent;
-    void*              SetTimer;
+    EFI_CREATE_EVENT   CreateEvent;
+    EFI_SET_TIMER      SetTimer;
     EFI_WAIT_FOR_EVENT WaitForEvent;
     void*              SignalEvent;
-    void*              CloseEvent;
+    EFI_CLOSE_EVENT    CloseEvent;
     void*              CheckEvent;
 
     //
@@ -571,9 +676,9 @@ typedef struct {
     //
     // Miscellaneous Services
     //
-    void* GetNextMonotonicCount;
-    void* Stall;
-    void* SetWatchdogTimer;
+    void*                  GetNextMonotonicCount;
+    void*                  Stall;
+    EFI_SET_WATCHDOG_TIMER SetWatchdogTimer;
 
     //
     // DriverSupport Services
