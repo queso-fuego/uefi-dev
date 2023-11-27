@@ -78,6 +78,10 @@ typedef UINT64 EFI_VIRTUAL_ADDRESS;
 {0x31878c87,0xb75,0x11d5,\
 0x9a,0x4f,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
 
+#define EFI_ABSOLUTE_POINTER_PROTOCOL_GUID \
+{0x8D59D32B,0xC655,0x4AE9,\
+0x9B,0x15,{0xF2, 0x59, 0x04, 0x99, 0x2A, 0x43}}
+
 // EFI_STATUS Codes - UEFI Spec 2.10 Appendix D
 #define EFI_SUCCESS 0ULL
 
@@ -87,7 +91,6 @@ typedef UINT64 EFI_VIRTUAL_ADDRESS;
 
 #define EFI_UNSUPPORTED  ENCODE_ERROR(3)
 #define EFI_DEVICE_ERROR ENCODE_ERROR(7)
-
 
 // EFI_GRAPHICS_OUTPUT_PROTOCOL
 typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
@@ -393,6 +396,60 @@ typedef struct EFI_SIMPLE_POINTER_PROTOCOL {
     EFI_EVENT                    WaitForInput;
     EFI_SIMPLE_POINTER_MODE      *Mode;
 } EFI_SIMPLE_POINTER_PROTOCOL;
+
+// EFI_ABSOLUTE_POINTER_PROTOCOL
+typedef struct EFI_ABSOLUTE_POINTER_PROTOCOL EFI_ABSOLUTE_POINTER_PROTOCOL; 
+
+// EFI_ABSOLUTE_POINTER_MODE
+typedef struct {
+    UINT64 AbsoluteMinX;
+    UINT64 AbsoluteMinY;
+    UINT64 AbsoluteMinZ;
+    UINT64 AbsoluteMaxX;
+    UINT64 AbsoluteMaxY;
+    UINT64 AbsoluteMaxZ;
+    UINT32 Attributes;
+} EFI_ABSOLUTE_POINTER_MODE;
+
+// Attributes bit values
+#define EFI_ABSP_SupportsAltActive   0x00000001
+#define EFI_ABSP_SupportsPressureAsZ 0x00000002
+
+// EFI_ABSOLUTE_POINTER_RESET: UEFI Spec 2.10 section 12.7.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_ABSOLUTE_POINTER_RESET) (
+    IN EFI_ABSOLUTE_POINTER_PROTOCOL *This,
+    IN BOOLEAN                       ExtendedVerification
+);
+
+// EFI_ABSOLUTE_POINTER_STATE
+typedef struct {
+    UINT64 CurrentX;
+    UINT64 CurrentY;
+    UINT64 CurrentZ;
+    UINT32 ActiveButtons;
+} EFI_ABSOLUTE_POINTER_STATE;
+
+// ActiveButtons bit values
+#define EFI_ABSP_TouchActive 0x00000001
+#define EFI_ABS_AltActive    0x00000002
+
+// EFI_ABSOLUTE_POINTER_GET_STATE: UEFI Spec 2.10 section 12.7.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_ABSOLUTE_POINTER_GET_STATE) (
+    IN EFI_ABSOLUTE_POINTER_PROTOCOL *This,
+    OUT EFI_ABSOLUTE_POINTER_STATE   *State
+);
+
+// EFI_ABSOLUTE_POINTER_PROTOCOL: UEFI Spec 2.10 section 12.7.1
+typedef struct EFI_ABSOLUTE_POINTER_PROTOCOL {
+    EFI_ABSOLUTE_POINTER_RESET     Reset;
+    EFI_ABSOLUTE_POINTER_GET_STATE GetState;
+    EFI_EVENT                      WaitForInput;
+    EFI_ABSOLUTE_POINTER_MODE      *Mode;
+} EFI_ABSOLUTE_POINTER_PROTOCOL;
 
 // EFI_FREE_POOL: UEFI Spec 2.10 section 7.2.5
 typedef

@@ -713,18 +713,48 @@ EFI_STATUS set_graphics_mode(void) {
     return EFI_SUCCESS;
 }
 
-// ===============================================================
-// Test mouse & cursor support with Simple Pointer Protocol (SPP)
-// ===============================================================
+// ===================================================================
+// Test mouse, touchscreen & various cursor/pointer support using 
+//   Simple Pointer Protocol (SPP) & Absolute Pointer Protocol (APP)
+// ===================================================================
 EFI_STATUS test_mouse(void) {
     // Get SPP protocol via LocateHandleBuffer()
     EFI_GUID spp_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    EFI_SIMPLE_POINTER_PROTOCOL *spp = NULL;
+    EFI_SIMPLE_POINTER_PROTOCOL *spp[5] = {0};
     UINTN num_handles = 0;
     EFI_HANDLE *handle_buffer = NULL;
     EFI_STATUS status = 0;
     INTN cursor_size = 8;               // Size in pixels    
     INTN cursor_x = 0, cursor_y = 0;    // Mouse cursor position
+
+    // Get APP protocol via LocateHandleBuffer()
+    EFI_GUID app_guid = EFI_ABSOLUTE_POINTER_PROTOCOL_GUID;
+    EFI_ABSOLUTE_POINTER_PROTOCOL *app[5] = {0};
+
+    typedef enum {
+        CIN = 0,    // ConIn (keyboard)
+        SPP = 1,    // Simple Pointer Protocol (mouse/touchpad)
+        APP = 2,    // Absolute Pointer Protocol (touchscreen/digitizer)
+    } INPUT_TYPE;
+
+    typedef struct {
+        EFI_EVENT wait_event;   // This will be used in WaitForEvent()
+        INPUT_TYPE type;
+        union {
+            EFI_SIMPLE_POINTER_PROTOCOL   *spp;
+            EFI_ABSOLUTE_POINTER_PROTOCOL *app;
+        };
+    } INPUT_PROTOCOL;
+
+    INPUT_PROTOCOL input_protocols[11] = {0}; // 11 = Max of 5 spp + 5 app + 1 conin
+    UINTN num_protocols = 0;
+
+    // First input will be ConIn
+    input_protocols[num_protocols++] = (INPUT_PROTOCOL){ 
+        .wait_event = cin->WaitForKey,
+        .type = CIN,
+        .spp = NULL,
+    };
 
     // Get GOP protocol via LocateProtocol()
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
@@ -745,44 +775,109 @@ EFI_STATUS test_mouse(void) {
     status = bs->LocateHandleBuffer(ByProtocol, &spp_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) {
         eprintf(u"\r\nERROR: %x; Could not locate Simple Pointer Protocol handle buffer.\r\n", status);
-        return status;
     }
 
     cout->ClearScreen(cout);
 
     BOOLEAN found_mode = FALSE;
 
-    // Open all SPP protocols for each handle, until we get a valid one we can use
+    // Open all SPP protocols for each handle
     for (UINTN i = 0; i < num_handles; i++) {
         status = bs->OpenProtocol(handle_buffer[i], 
                                   &spp_guid,
-                                  (VOID **)&spp,
+                                  (VOID **)&spp[i],
                                   image,
                                   NULL,
                                   EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 
         if (EFI_ERROR(status)) {
             eprintf(u"\r\nERROR: %x; Could not Open Simple Pointer Protocol on handle.\r\n", status);
-            return status;
+            continue;
         }
+
+        // Reset device
+        spp[i]->Reset(spp[i], TRUE);
 
         // Print initial SPP mode info
         printf(u"SPP %u; Resolution X: %u, Y: %u, Z: %u, LButton: %u, RButton: %u\r\n",
                i,
-               spp->Mode->ResolutionX, 
-               spp->Mode->ResolutionY,
-               spp->Mode->ResolutionZ,
-               spp->Mode->LeftButton, 
-               spp->Mode->RightButton);
+               spp[i]->Mode->ResolutionX, 
+               spp[i]->Mode->ResolutionY,
+               spp[i]->Mode->ResolutionZ,
+               spp[i]->Mode->LeftButton, 
+               spp[i]->Mode->RightButton);
 
-        if (spp->Mode->ResolutionX < 65536) {
+        if (spp[i]->Mode->ResolutionX < 65536) {
             found_mode = TRUE;
-            break; // Found a valid mode
+            // Add valid protocol to array
+            input_protocols[num_protocols++] = (INPUT_PROTOCOL){ 
+                .wait_event = spp[i]->WaitForInput,
+                .type = SPP,
+                .spp = spp[i]
+            };
         }
     }
     
-    if (!found_mode) {
-        eprintf(u"\r\nERROR: Could not find any valid SPP Mode.\r\n");
+    if (!found_mode) eprintf(u"\r\nERROR: Could not find any valid SPP Mode.\r\n");
+
+    // Free memory pool allocated by LocateHandleBuffer()
+    bs->FreePool(handle_buffer);
+
+    // Use LocateHandleBuffer() to find all APPs 
+    num_handles = 0;
+    handle_buffer = NULL;
+    found_mode = FALSE;
+
+    status = bs->LocateHandleBuffer(ByProtocol, &app_guid, NULL, &num_handles, &handle_buffer);
+    if (EFI_ERROR(status)) {
+        eprintf(u"\r\nERROR: %x; Could not locate Absolute Pointer Protocol handle buffer.\r\n", status);
+    }
+
+    printf(u"\r\n");    // Separate SPP and APP info visually
+
+    // Open all APP protocols for each handle
+    for (UINTN i = 0; i < num_handles; i++) {
+        status = bs->OpenProtocol(handle_buffer[i], 
+                                  &app_guid,
+                                  (VOID **)&app[i],
+                                  image,
+                                  NULL,
+                                  EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+
+        if (EFI_ERROR(status)) {
+            eprintf(u"\r\nERROR: %x; Could not Open Simple Pointer Protocol on handle.\r\n", status);
+            continue;
+        }
+
+        // Reset device
+        app[i]->Reset(app[i], TRUE);
+
+        // Print initial APP mode info
+        printf(u"APP %u; Min X: %u, Y: %u, Z: %u, Max X: %u, Y: %u, Z: %u, Attributes: %b\r\n",
+               i,
+               app[i]->Mode->AbsoluteMinX, 
+               app[i]->Mode->AbsoluteMinY,
+               app[i]->Mode->AbsoluteMinZ,
+               app[i]->Mode->AbsoluteMaxX, 
+               app[i]->Mode->AbsoluteMaxY,
+               app[i]->Mode->AbsoluteMaxZ,
+               app[i]->Mode->Attributes);
+
+        if (app[i]->Mode->AbsoluteMaxX < 65536) {
+            found_mode = TRUE;
+            // Add valid protocol to array
+            input_protocols[num_protocols++] = (INPUT_PROTOCOL){ 
+                .wait_event = app[i]->WaitForInput,
+                .type = APP,
+                .app = app[i]
+            };
+        }
+    }
+    
+    if (!found_mode) eprintf(u"\r\nERROR: Could not find any valid APP Mode.\r\n");
+
+    if (num_protocols == 0) {
+        eprintf(u"\r\nERROR: Could not find any Simple or Absolute Pointer Protocols.\r\n");
         get_key();
         return 1;
     }
@@ -805,23 +900,22 @@ EFI_STATUS test_mouse(void) {
         for (INTN x = 0; x < cursor_size; x++) {
             save_buffer[(y * cursor_size) + x] = 
                 fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)];
-        }
-    }
 
-    for (INTN y = 0; y < cursor_size; y++) {
-        for (INTN x = 0; x < cursor_size; x++) {
             EFI_GRAPHICS_OUTPUT_BLT_PIXEL csr_px = cursor_buffer[(y * cursor_size) + x];
             fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = csr_px;
         }
     }
 
     // Input loop
-    while (1) {
-        EFI_EVENT events[2] = { cin->WaitForKey, spp->WaitForInput };
+    // Fill out event queue first
+    EFI_EVENT events[11] = {0}; // Same max # of elems as input_protocols
+    for (UINTN i = 0; i < num_protocols; i++) events[i] = input_protocols[i].wait_event;
+
+    while (TRUE) {
         UINTN index = 0;
 
-        bs->WaitForEvent(2, events, &index);
-        if (index == 0) {
+        bs->WaitForEvent(num_protocols, events, &index);
+        if (input_protocols[index].type == CIN) {
             // Keypress
             EFI_INPUT_KEY key = { 0 };
             cin->ReadKeyStroke(cin, &key);
@@ -831,38 +925,32 @@ EFI_STATUS test_mouse(void) {
                 break;
             }
 
-        } else if (index == 1) {
-            // Mouse event
+        } else if (input_protocols[index].type == SPP) {
+            // Simple Pointer Protocol; Mouse event
             // Get mouse state
             EFI_SIMPLE_POINTER_STATE state = { 0 };
-            spp->GetState(spp, &state);
+            EFI_SIMPLE_POINTER_PROTOCOL *active_spp = input_protocols[index].spp;
+            active_spp->GetState(active_spp, &state);
 
             // Print current info
             // Movement is spp state's RelativeMovement / spp mode's Resolution
-            //   movement amount is in mm; 1mm = 2% of horizontal or vertical
-            //   resolution
-            //float xmm_float = (float)state.RelativeMovementX / (float)spp->Mode->ResolutionX;
-            //float ymm_float = (float)state.RelativeMovementY / (float)spp->Mode->ResolutionY;
-            //INT32 xmm = (INT32)xmm_float;
-            //INT32 ymm = (INT32)ymm_float;
-
-            INT32 xmm = state.RelativeMovementX / spp->Mode->ResolutionX;
-            INT32 ymm = state.RelativeMovementY / spp->Mode->ResolutionY;
+            //   movement amount is in mm; 1mm = 2% of horizontal or vertical resolution
+            float xmm_float = (float)state.RelativeMovementX / (float)active_spp->Mode->ResolutionX;
+            float ymm_float = (float)state.RelativeMovementY / (float)active_spp->Mode->ResolutionY;
 
             // If moved a tiny bit, show that on screen for a small minimum amount
-            //if (xmm_float > 0.0 && xmm == 0) xmm = 1;
-            //if (ymm_float > 0.0 && ymm == 0) ymm = 1;
-            if (state.RelativeMovementX > 0 && xmm == 0) xmm = 1;
-            if (state.RelativeMovementY > 0 && ymm == 0) ymm = 1;
+            if (state.RelativeMovementX > 0 && xmm_float == 0.0) xmm_float = 1.0;
+            if (state.RelativeMovementY > 0 && ymm_float == 0.0) ymm_float = 1.0;
 
             // Erase text first before reprinting
             printf(u"                                                                      \r");
             printf(u"Mouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
-                  cursor_x, cursor_y, xmm, ymm, state.LeftButton, state.RightButton);
+                  cursor_x, cursor_y, (INTN)xmm_float, (INTN)ymm_float, 
+                  state.LeftButton, state.RightButton);
 
             // Draw cursor: Get pixel amount to move per mm
-            INT32 xres_mm = mode_info->HorizontalResolution * 0.02;
-            INT32 yres_mm = mode_info->VerticalResolution   * 0.02;
+            float xres_mm_px = mode_info->HorizontalResolution * 0.02;
+            float yres_mm_px = mode_info->VerticalResolution   * 0.02;
 
             // Save framebuffer data at mouse position first, then redraw that data
             //   instead of just overwriting with background color e.g. with a blt buffer and
@@ -874,8 +962,8 @@ EFI_STATUS test_mouse(void) {
                 }
             }
 
-            cursor_x += (xres_mm * xmm);
-            cursor_y += (yres_mm * ymm);
+            cursor_x += (INTN)(xres_mm_px * xmm_float);
+            cursor_y += (INTN)(yres_mm_px * ymm_float);
 
             // Keep cursor in screen bounds
             if (cursor_x < 0) cursor_x = 0;
@@ -888,21 +976,65 @@ EFI_STATUS test_mouse(void) {
                 for (INTN x = 0; x < cursor_size; x++) {
                     save_buffer[(y * cursor_size) + x] = 
                         fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)];
+
+                    EFI_GRAPHICS_OUTPUT_BLT_PIXEL csr_px = cursor_buffer[(y * cursor_size) + x];
+                    fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = csr_px;
                 }
             }
 
-            // Then draw cursor
+        } else if (input_protocols[index].type == APP) {
+            // Handle absolute pointer protocol
+            // Get state
+            EFI_ABSOLUTE_POINTER_STATE state = {0};
+            EFI_ABSOLUTE_POINTER_PROTOCOL *active_app = input_protocols[index].app;
+            active_app->GetState(active_app, &state);
+
+            // Print state values
+            // Erase text first before reprinting
+            printf(u"                                                                      \r");
+            printf(u"Ptr Xpos: %u, Ypos: %u, Zpos: %u, Buttons: %b\r",
+                  state.CurrentX, state.CurrentY, state.CurrentZ,
+                  state.ActiveButtons);
+
+            // Save framebuffer data at mouse position first, then redraw that data
+            //   instead of just overwriting with background color e.g. with a blt buffer and
+            //   EfiVideoToBltBuffer and EfiBltBufferToVideo
             for (INTN y = 0; y < cursor_size; y++) {
                 for (INTN x = 0; x < cursor_size; x++) {
+                    fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = 
+                        save_buffer[(y * cursor_size) + x];
+                }
+            }
+
+            // Get ratio of GOP screen resolution to APP max values, to translate the APP
+            //   position to the correct on screen GOP position
+            float x_app_ratio = (float)mode_info->HorizontalResolution / 
+                                (float)active_app->Mode->AbsoluteMaxX;
+
+            float y_app_ratio = (float)mode_info->VerticalResolution / 
+                                (float)active_app->Mode->AbsoluteMaxY;
+
+            cursor_x = (INTN)((float)state.CurrentX * x_app_ratio);
+            cursor_y = (INTN)((float)state.CurrentY * y_app_ratio);
+
+            // Keep cursor in screen bounds
+            if (cursor_x < 0) cursor_x = 0;
+            if (cursor_x > xres - cursor_size) cursor_x = xres - cursor_size;
+            if (cursor_y < 0) cursor_y = 0;
+            if (cursor_y > yres - cursor_size) cursor_y = yres - cursor_size;
+
+            // Save FB data at new cursor position before drawing over it
+            for (INTN y = 0; y < cursor_size; y++) {
+                for (INTN x = 0; x < cursor_size; x++) {
+                    save_buffer[(y * cursor_size) + x] = 
+                        fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)];
+
                     EFI_GRAPHICS_OUTPUT_BLT_PIXEL csr_px = cursor_buffer[(y * cursor_size) + x];
                     fb[(mode_info->PixelsPerScanLine * (cursor_y + y)) + (cursor_x + x)] = csr_px;
                 }
             }
         }
     }
-
-    // Free memory pool allocated by LocateHandleBuffer()
-    bs->FreePool(handle_buffer);
 
     return EFI_SUCCESS;
 }
