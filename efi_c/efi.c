@@ -411,6 +411,16 @@ EFI_INPUT_KEY get_key(void) {
 // Set Text Mode
 // ====================
 EFI_STATUS set_text_mode(void) {
+    // Store found Text mode info
+    typedef struct {
+        UINTN cols;
+        UINTN rows;
+    } Text_Mode_Info;
+
+    Text_Mode_Info text_modes[20];
+
+    UINTN mode_index = 0;   // Current mode within entire menu of GOP mode choices;
+
     // Overall screen loop
     while (true) {
         cout->ClearScreen(cout);
@@ -441,57 +451,142 @@ EFI_STATUS set_text_mode(void) {
 
         cout->OutputString(cout, u"Available text modes:\r\n");
 
-        // Print other text mode infos
-        const INT32 max = cout->Mode->MaxMode;
-        for (INT32 i = 0; i < max; i++) {
-            cout->QueryMode(cout, i, &max_cols, &max_rows);
-            printf(u"Mode #: %d, %dx%d\r\n", i, max_cols, max_rows);
+        UINTN menu_top = cout->Mode->CursorRow, menu_bottom = max_rows;
+
+        // Print keybinds at bottom of screen
+        cout->SetCursorPosition(cout, 0, menu_bottom-3);
+        printf(u"Up/Down Arrow = Move Cursor\r\n"
+               u"Enter = Select\r\n"
+               u"Escape = Go Back");
+
+        cout->SetCursorPosition(cout, 0, menu_top);
+        menu_bottom -= 5;   // Bottom of menu will be 2 rows above keybinds
+        UINTN menu_len = menu_bottom - menu_top;
+
+        // Get all available Text modes' info
+        const UINT32 max = cout->Mode->MaxMode;
+        if (max < menu_len) {
+            // Bound menu by actual # of available modes
+            menu_bottom = menu_top + max-1;
+            menu_len = menu_bottom - menu_top;  // Limit # of modes in menu to max mode - 1
         }
 
-        // Get number from user
-        while (true) {
-            static UINTN current_mode = 0;
-            current_mode = cout->Mode->Mode;
+        for (UINT32 i = 0; i < ARRAY_SIZE(text_modes) && i < max; i++) 
+            cout->QueryMode(cout, i, &text_modes[i].cols, &text_modes[i].rows);
 
-            for (UINTN i = 0; i < 79; i++) printf(u" ");
-            printf(u"\rSelect Text Mode # (0-%d): %d", max, current_mode);
+        // Highlight top menu row to start off
+        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+        printf(u"Mode %d: %dx%d", 0, text_modes[0].cols, text_modes[0].rows);
 
-            // Move cursor left by 1, to overwrite the mode #
-            cout->SetCursorPosition(cout, cout->Mode->CursorColumn-1, cout->Mode->CursorRow);
+        // Print other text mode infos
+        cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+        for (UINT32 i = 1; i < menu_len + 1; i++) 
+            printf(u"\r\nMode %d: %dx%d", i, text_modes[i].cols, text_modes[i].rows);
+
+        // Get input from user
+        cout->SetCursorPosition(cout, 0, menu_top);
+        bool getting_input = true;
+        while (getting_input) {
+            UINTN current_row = cout->Mode->CursorRow;
 
             EFI_INPUT_KEY key = get_key();
+            switch (key.ScanCode) {
+                case SCANCODE_ESC: return EFI_SUCCESS;  // ESC Key: Go back to main menu
 
-            // Get key info
-            CHAR16 cbuf[2];
-            cbuf[0] = key.UnicodeChar;
-            cbuf[1] = u'\0';
-            //printf(u"Scancode: %x, Unicode Char: %s\r", key.ScanCode, cbuf);
+                case SCANCODE_UP_ARROW:
+                    if (current_row == menu_top && mode_index > 0) {
+                        // Scroll menu up by decrementing all modes by 1
+                        printf(u"                    \r");  // Blank out mode text first
 
-            // Process keystroke
-            printf(u"%s ", cbuf);
+                        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+                        mode_index--;
+                        printf(u"Mode %d: %dx%d", 
+                               mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
 
-            if (key.ScanCode == SCANCODE_ESC) {
-                // Go back to main menu
-                return EFI_SUCCESS;
+                        cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+                        UINTN temp_mode = mode_index + 1;
+                        for (UINT32 i = 0; i < menu_len; i++, temp_mode++) {
+                            printf(u"\r\n                    \r"  // Blank out mode text first
+                                   u"Mode %d: %dx%d\r", 
+                                   temp_mode, text_modes[temp_mode].cols, text_modes[temp_mode].rows);
+                        }
+
+                        // Reset cursor to top of menu
+                        cout->SetCursorPosition(cout, 0, menu_top);
+
+                    } else if (current_row-1 >= menu_top) {
+                        // De-highlight current row, move up 1 row, highlight new row
+                        printf(u"                    \r"    // Blank out mode text first
+                               u"Mode %d: %dx%d\r", 
+                               mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
+
+                        mode_index--;
+                        current_row--;
+                        cout->SetCursorPosition(cout, 0, current_row);
+                        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+                        printf(u"                    \r"    // Blank out mode text first
+                               u"Mode %d: %dx%d\r", 
+                               mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
+                    }
+
+                    // Reset colors
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+                    break;
+
+                case SCANCODE_DOWN_ARROW:
+                    // NOTE: Max valid GOP mode is ModeMax-1 per UEFI spec
+                    if (current_row == menu_bottom && mode_index < max-1) {
+                        // Scroll menu down by incrementing all modes by 1
+                        mode_index -= menu_len - 1;
+
+                        // Reset cursor to top of menu
+                        cout->SetCursorPosition(cout, 0, menu_top);
+
+                        // Print modes up until the last menu row
+                        for (UINT32 i = 0; i < menu_len; i++, mode_index++) {
+                            printf(u"                    \r"    // Blank out mode text first
+                                   u"Mode %d: %dx%d\r\n", 
+                                   mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
+                        }
+
+                        // Highlight last row
+                        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+                        printf(u"                    \r"    // Blank out mode text first
+                               u"Mode %d: %dx%d\r", 
+                               mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
+
+                    } else if (current_row+1 <= menu_bottom) {
+                        // De-highlight current row, move down 1 row, highlight new row
+                        printf(u"                    \r"    // Blank out mode text first
+                               u"Mode %d: %dx%d\r\n", 
+                               mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
+
+                        mode_index++;
+                        current_row++;
+                        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+                        printf(u"                    \r"    // Blank out mode text first
+                               u"Mode %d: %dx%d\r", 
+                               mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
+                    }
+
+                    // Reset colors
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+                    break;
+
+                default:
+                    if (key.UnicodeChar == u'\r' && text_modes[mode_index].cols != 0) {	// Qemu can have invalid text modes
+                        // Enter key, set Text mode
+                        cout->SetMode(cout, mode_index);
+                        cout->QueryMode(cout, mode_index, &text_modes[mode_index].cols, &text_modes[mode_index].rows);
+
+                        // Clear text screen
+			cout->ClearScreen(cout);
+
+                        getting_input = false;  // Will leave input loop and redraw screen
+                        mode_index = 0;         // Reset last selected mode in menu
+                    }
+                    break;
             }
-
-            // Choose text mode & redraw screen
-            current_mode = key.UnicodeChar - u'0';
-            EFI_STATUS status = cout->SetMode(cout, current_mode);
-            if (EFI_ERROR(status)) {
-                // Handle errors
-                if (status == EFI_DEVICE_ERROR) { 
-                    eprintf(u"ERROR: %x; Device Error", status);
-                } else if (status == EFI_UNSUPPORTED) {
-                    eprintf(u"ERROR: %x; Mode # is invalid", status);
-                }
-                eprintf(u"\r\nPress any key to select again", status);
-                get_key();
-
-            } 
-
-            // Set new mode, redraw screen from outer loop
-            break;
         }
     }
 
