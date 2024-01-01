@@ -24,6 +24,10 @@
 #define px_BLACK {0x00,0x00,0x00,0x00}
 #define px_BLUE  {0x98,0x00,0x00,0x00}  // EFI_BLUE
 
+#ifdef __clang__
+int _fltused = 0;   // If using floating point code & lld-link, need to define this
+#endif
+
 // -----------------
 // Global variables
 // -----------------
@@ -815,7 +819,7 @@ EFI_STATUS set_graphics_mode(void) {
 EFI_STATUS test_mouse(void) {
     // Get SPP protocol via LocateHandleBuffer()
     EFI_GUID spp_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
-    EFI_SIMPLE_POINTER_PROTOCOL *spp[5] = {0};
+    EFI_SIMPLE_POINTER_PROTOCOL *spp[5];
     UINTN num_handles = 0;
     EFI_HANDLE *handle_buffer = NULL;
     EFI_STATUS status = 0;
@@ -824,7 +828,7 @@ EFI_STATUS test_mouse(void) {
 
     // Get APP protocol via LocateHandleBuffer()
     EFI_GUID app_guid = EFI_ABSOLUTE_POINTER_PROTOCOL_GUID;
-    EFI_ABSOLUTE_POINTER_PROTOCOL *app[5] = {0};
+    EFI_ABSOLUTE_POINTER_PROTOCOL *app[5];
 
     typedef enum {
         CIN = 0,    // ConIn (keyboard)
@@ -841,7 +845,7 @@ EFI_STATUS test_mouse(void) {
         };
     } INPUT_PROTOCOL;
 
-    INPUT_PROTOCOL input_protocols[11] = {0}; // 11 = Max of 5 spp + 5 app + 1 conin
+    INPUT_PROTOCOL input_protocols[11]; // 11 = Max of 5 spp + 5 app + 1 conin
     UINTN num_protocols = 0;
 
     // First input will be ConIn
@@ -1003,7 +1007,7 @@ EFI_STATUS test_mouse(void) {
 
     // Input loop
     // Fill out event queue first
-    EFI_EVENT events[11] = {0}; // Same max # of elems as input_protocols
+    EFI_EVENT events[11]; // Same max # of elems as input_protocols
     for (UINTN i = 0; i < num_protocols; i++) events[i] = input_protocols[i].wait_event;
 
     while (TRUE) {
@@ -1012,7 +1016,7 @@ EFI_STATUS test_mouse(void) {
         bs->WaitForEvent(num_protocols, events, &index);
         if (input_protocols[index].type == CIN) {
             // Keypress
-            EFI_INPUT_KEY key = { 0 };
+            EFI_INPUT_KEY key;
             cin->ReadKeyStroke(cin, &key);
 
             if (key.ScanCode == SCANCODE_ESC) {
@@ -1023,7 +1027,7 @@ EFI_STATUS test_mouse(void) {
         } else if (input_protocols[index].type == SPP) {
             // Simple Pointer Protocol; Mouse event
             // Get mouse state
-            EFI_SIMPLE_POINTER_STATE state = { 0 };
+            EFI_SIMPLE_POINTER_STATE state;
             EFI_SIMPLE_POINTER_PROTOCOL *active_spp = input_protocols[index].spp;
             active_spp->GetState(active_spp, &state);
 
@@ -1080,7 +1084,7 @@ EFI_STATUS test_mouse(void) {
         } else if (input_protocols[index].type == APP) {
             // Handle absolute pointer protocol
             // Get state
-            EFI_ABSOLUTE_POINTER_STATE state = {0};
+            EFI_ABSOLUTE_POINTER_STATE state;
             EFI_ABSOLUTE_POINTER_PROTOCOL *active_app = input_protocols[index].app;
             active_app->GetState(active_app, &state);
 
@@ -1152,8 +1156,8 @@ VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
     UINT32 save_col = cout->Mode->CursorColumn, save_row = cout->Mode->CursorRow;
 
     // Get current date/time
-    EFI_TIME time = {0};
-    EFI_TIME_CAPABILITIES capabilities = {0};
+    EFI_TIME time;
+    EFI_TIME_CAPABILITIES capabilities;
     rs->GetTime(&time, &capabilities);
 
     // Move cursor to print in lower right corner
@@ -1221,7 +1225,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             UINT32 cols;
         } Timer_Context;
 
-        Timer_Context context = {0};
+        Timer_Context context;
         context.rows = rows;
         context.cols = cols;
 
