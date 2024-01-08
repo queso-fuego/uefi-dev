@@ -50,7 +50,7 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_buffer[] = {
     px_LGRAY, px_LGRAY, px_BLUE, px_BLUE, px_BLUE, px_BLUE, px_LGRAY, px_LGRAY,     // Line 8
 };
 
-// Buffer to save Fraembuffer data at cursor position
+// Buffer to save Framebuffer data at cursor position
 EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 
 // ====================
@@ -59,11 +59,79 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     cout = systable->ConOut;
     cin = systable->ConIn;
-    //cerr = systable->StdErr; // TODO: Research why this does not work in emulation, nothing prints
-    cerr = cout;    // TEMP: Use stdout for error printing also
+    //cerr = systable->StdErr; // Stderr can be set to a serial output or other non-display device.
+    cerr = cout;  // Use stdout for error printing 
     bs = systable->BootServices;
     rs = systable->RuntimeServices;
     image = handle;
+}
+
+// ================================
+// CHAR16 strcpy:
+//   Copy src string into dst 
+//   Returns dst
+// ================================
+CHAR16 *strcpy_u16(CHAR16 *dst, CHAR16 *src) {
+    if (!dst) return NULL;
+    if (!src) return dst;
+
+    CHAR16 *result = dst;
+    while (*src) *dst++ = *src++;
+
+    *dst = u'\0';   // Null terminate
+
+    return result;
+}
+
+// ================================
+// CHAR16 strncmp:
+//   Compare 2 strings, each character, up to at most len bytes
+//   Returns difference in strings at last point of comparison:
+//   0 if strings are equal, <0 if s2 is greater, >0 if s1 is greater
+// ================================
+INTN strncmp_u16(CHAR16 *s1, CHAR16 *s2, UINTN len) {
+    if (len == 0) return 0;
+
+    while (len > 0 && *s1 && *s2 && *s1 == *s2) {
+        s1++;
+        s2++;
+        len--;
+    }
+
+    return *s1 - *s2;
+}
+
+// ================================
+// CHAR16 strrchr:
+//   Return last occurrence of C in string
+// ================================
+CHAR16 *strrchr_u16(CHAR16 *str, CHAR16 c) {
+    CHAR16 *result = NULL;
+
+    while (*str) {
+        if (*str == c) result = str;
+        str++;
+    }
+
+    return result;
+}
+
+// ================================
+// CHAR16 strcat:
+//   Concatenate src string onto the end of dst string, at
+//   dst's original null terminator position.
+//  Returns dst
+// ================================
+CHAR16 *strcat_u16(CHAR16 *dst, CHAR16 *src) {
+    CHAR16 *s = dst;
+
+    while (*s) s++; // Go until null terminator
+
+    while (*src) *s++ = *src++;
+
+    *s = u'\0'; // I guess this isn't normal libc behavior? But seems better to null terminate
+
+    return dst; 
 }
 
 // ================================
@@ -1176,6 +1244,248 @@ VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
     cout->SetCursorPosition(cout, save_col, save_row);
 }
 
+// ================================================
+// Read & print files in the EFI System Partition
+// ================================================
+EFI_STATUS read_esp_files(void) {
+    // Get the Loaded Image protocol for this EFI image/application itself,
+    //   in order to get the device handle to use for the Simple File System Protocol
+    EFI_STATUS status = EFI_SUCCESS;
+    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
+    status = bs->OpenProtocol(image,
+                              &lip_guid,
+                              (VOID **)&lip,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        eprintf(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        get_key();
+        return status;
+    }
+
+    // Get Simple File System Protocol for device handle for this loaded
+    //   image, to open the root directory for the ESP
+    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
+    status = bs->OpenProtocol(lip->DeviceHandle,
+                              &sfsp_guid,
+                              (VOID **)&sfsp,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        eprintf(u"Error %x; Could not open Simple File System Protocol\r\n", status);
+        get_key();
+        return status;
+    }
+
+    // Open root directory via OpenVolume()
+    EFI_FILE_PROTOCOL *dirp = NULL;
+    status = sfsp->OpenVolume(sfsp, &dirp);
+    if (EFI_ERROR(status)) {
+        eprintf(u"Error %x; Could not Open Volume for root directory\r\n", status);
+        get_key();
+        goto cleanup;
+    }
+
+    // Start at root directory
+    CHAR16 current_directory[256];
+    strcpy_u16(current_directory, u"/");    
+
+    // Print dir entries for currently opened directory
+    // Overall input loop
+    INT32 csr_row = 1;
+    while (true) {
+        cout->ClearScreen(cout);
+        printf(u"%s:\r\n", current_directory);
+
+        INT32 num_entries = 0;
+        EFI_FILE_INFO file_info;
+
+        dirp->SetPosition(dirp, 0);                 // Reset to start of directory entries
+        UINTN buf_size = sizeof file_info;
+        dirp->Read(dirp, &buf_size, &file_info);
+        while (buf_size > 0) {
+            num_entries++;
+
+            // Got next dir entry, print info
+            if (csr_row == cout->Mode->CursorRow) {
+                // Highlight row cursor/user is on
+                cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+            }
+
+            printf(u"%s %s\r\n", 
+                   (file_info.Attribute & EFI_FILE_DIRECTORY) ? u"[DIR] " : u"[FILE]",
+                   file_info.FileName);
+
+            if (csr_row+1 == cout->Mode->CursorRow) {
+                // De-highlight rows after cursor
+                cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+            }
+
+            buf_size = sizeof file_info;
+            dirp->Read(dirp, &buf_size, &file_info);
+        }
+
+        EFI_INPUT_KEY key = get_key();
+        switch (key.ScanCode) {
+            case SCANCODE_ESC:
+                // ESC Key, exit and go back to main menu
+                dirp->Close(dirp);  // Close last open directory 
+                goto cleanup;
+                break;
+
+            case SCANCODE_UP_ARROW:
+                if (csr_row > 1) csr_row--;
+                break;
+
+            case SCANCODE_DOWN_ARROW:
+                if (csr_row < num_entries) csr_row++;
+                break;
+
+            default:
+                if (key.UnicodeChar == u'\r') {
+                    // Enter key; 
+                    //   for a directory, enter that directory and iterate the loop
+                    //   for a file, print the file contents to screen
+
+                    // Get directory entry under user cursor row
+                    dirp->SetPosition(dirp, 0);  // Reset to start of directory entries
+                    INT32 i = 0;  
+                    do {
+                        buf_size = sizeof file_info;
+                        dirp->Read(dirp, &buf_size, &file_info);
+                        i++;
+                    } while (i < csr_row);
+
+                    if (file_info.Attribute & EFI_FILE_DIRECTORY) {
+                        // Directory, open and enter this new directory
+                        EFI_FILE_PROTOCOL *new_dir;
+                        status = dirp->Open(dirp, 
+                                            &new_dir, 
+                                            file_info.FileName, 
+                                            EFI_FILE_MODE_READ,
+                                            0);
+
+                        if (EFI_ERROR(status)) {
+                            eprintf(u"Error %x; Could not open new directory %s\r\n", 
+                                    status, file_info.FileName);
+                            get_key();
+                            goto cleanup;
+                        }
+
+                        dirp->Close(dirp);  // Close last opened dir
+                        dirp = new_dir;     // Set new opened dir
+                        csr_row = 1;        // Reset user row to first entry in new directory
+
+                        // Set new path for current directory
+                        if (!strncmp_u16(file_info.FileName, u".", 2)) {
+                            // Current directory, do nothing
+
+                        } else if (!strncmp_u16(file_info.FileName, u"..", 3)) {
+                            // Parent directory, go back up and remove dir name from path
+                            CHAR16 *pos = strrchr_u16(current_directory, u'/');
+                            if (pos == current_directory) pos++;    // Move past initial root dir '/'
+
+                            *pos = u'\0';
+
+                        } else {
+                            // Go into nested directory, add on to current string
+                            if (current_directory[1] != u'\0') {
+                                strcat_u16(current_directory, u"/"); 
+                            }
+                            strcat_u16(current_directory, file_info.FileName);
+                        }
+                        continue;   // Continue overall loop and print new directory entries
+                    } 
+
+                    // Else this is a file, print contents:
+                    // Allocate buffer for file
+                    VOID *buffer = NULL;
+                    buf_size = file_info.FileSize;
+                    status = bs->AllocatePool(EfiLoaderData, buf_size, &buffer);
+                    if (EFI_ERROR(status)) {
+                        eprintf(u"Error %x; Could not allocate memory for file %s\r\n", 
+                                status, file_info.FileName);
+                        get_key();
+                        goto cleanup;
+                    }
+
+                    // Open file
+                    EFI_FILE_PROTOCOL *file = NULL;
+                    status = dirp->Open(dirp, 
+                                        &file, 
+                                        file_info.FileName, 
+                                        EFI_FILE_MODE_READ,
+                                        0);
+
+                    if (EFI_ERROR(status)) {
+                        eprintf(u"Error %x; Could not open file %s\r\n", 
+                                status, file_info.FileName);
+                        get_key();
+                        goto cleanup;
+                    }
+
+                    // Read file into buffer
+                    status = dirp->Read(file, &buf_size, buffer);
+                    if (EFI_ERROR(status)) {
+                        eprintf(u"Error %x; Could not read file %s into buffer.\r\n", 
+                                status, file_info.FileName);
+                        get_key();
+                        goto cleanup;
+                    } 
+
+                    if (buf_size != file_info.FileSize) {
+                        eprintf(u"Error: Could not read all of file %s into buffer.\r\n" 
+                                u"Bytes read: %u, Expected: %u\r\n",
+                                file_info.FileName, buf_size, file_info.FileSize);
+                        get_key();
+                        goto cleanup;
+                    }
+
+                    // Print buffer contents
+                    printf(u"\r\nFile Contents:\r\n");
+
+                    char *pos = (char *)buffer;
+                    for (UINTN bytes = buf_size; bytes > 0; bytes--) {
+                        CHAR16 str[2];
+                        str[0] = *pos;
+                        str[1] = u'\0';
+                        printf(u"%s", str);
+
+                        pos++;
+                    }
+
+                    printf(u"\r\n\r\nPress any key to continue...\r\n");
+                    get_key();
+
+                    // Free memory for file when done
+                    bs->FreePool(buffer);
+
+                    // Close file handle
+                    dirp->Close(file);
+                }
+                break;
+        }
+    }
+
+    cleanup:
+    // Close open protocols
+    bs->CloseProtocol(lip->DeviceHandle,
+                      &sfsp_guid,
+                      image,
+                      NULL);
+
+    bs->CloseProtocol(image,
+                      &lip_guid,
+                      image,
+                      NULL);
+
+    return status;
+}
+
 // ====================
 // Entry Point
 // ====================
@@ -1202,6 +1512,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             u"Set Text Mode",
             u"Set Graphics Mode",
             u"Test Mouse",
+            u"Read ESP Files",
         };
 
         // Functions to call for each menu option
@@ -1209,6 +1520,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             set_text_mode,
             set_graphics_mode,
             test_mouse,
+            read_esp_files,
         };
 
         // Clear console output; clear screen to background color and
