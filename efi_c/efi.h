@@ -11,10 +11,6 @@
 #include <stdbool.h>
 #include <stddef.h> // NULL
 
-#if __has_include(<uchar.h>)
-  #include <uchar.h>
-#endif
-
 // UEFI Spec 2.10 section 2.4
 #define IN
 #define OUT
@@ -44,9 +40,7 @@ typedef char     CHAR8;
 
 // UTF-16 equivalent-ish type, for UCS-2 characters
 //   codepoints <= 0xFFFF
-#ifndef _UCHAR_H
-    typedef uint_least16_t char16_t;
-#endif
+typedef uint_least16_t char16_t;
 typedef char16_t CHAR16;
 
 typedef void VOID;
@@ -120,6 +114,29 @@ typedef enum {
 {0x09576e93,0x6d3f,0x11d2,\
 0x8e,0x39,{0x00,0xa0,0xc9,0x69,0x72, 0x3b}}
 
+#define EFI_BLOCK_IO_PROTOCOL_GUID \
+{0x964e5b21,0x6459,0x11d2,\
+0x8e,0x39,{0x00,0xa0,0xc9,0x69,0x72,0x3b}}
+
+#define EFI_DISK_IO_PROTOCOL_GUID \
+{0xCE345171,0xBA0B,0x11d2,\
+0x8e,0x4F,{0x00,0xa0,0xc9,0x69,0x72,0x3b}}
+
+#define EFI_PARTITION_INFO_PROTOCOL_GUID \
+{0x8cf2f62c, 0xbc9b, 0x4821,\
+0x80, 0x8d, {0xec, 0x9e, 0xc4, 0x21, 0xa1, 0xa0}}
+
+// Partition Type GUID values:
+// EFI System Partition GUID
+#define ESP_GUID \
+{0xC12A7328, 0xF81F, 0x11D2, \
+0xBA, 0x4B, {0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B}}
+
+// (Microsoft) Basic Data GUID
+#define BASIC_DATA_GUID \
+{0xEBD0A0A2, 0xB9E5, 0x4433, \
+0x87, 0xC0, {0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7}}
+
 // EFI_STATUS Codes - UEFI Spec 2.10 Appendix D
 #define EFI_SUCCESS 0ULL
 
@@ -135,8 +152,7 @@ typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 // EFI_PIXEL_BITMASK
 typedef struct {
-    UINT32 RedMask;
-    UINT32 GreenMask;
+    UINT32 RedMask; UINT32 GreenMask;
     UINT32 BlueMask;
     UINT32 ReservedMask;
 } EFI_PIXEL_BITMASK;
@@ -852,6 +868,160 @@ typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
     UINT64                                      Revision;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME OpenVolume;
 } EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
+
+// EFI_BLOCK_IO_PROTOCOL: UEFI Spec 2.10 section 13.9
+#define EFI_BLOCK_IO_PROTOCOL_REVISION2 0x00020001
+#define EFI_BLOCK_IO_PROTOCOL_REVISION3 ((2<<16) | (31))
+
+typedef struct EFI_BLOCK_IO_PROTOCOL EFI_BLOCK_IO_PROTOCOL;
+
+// EFI_BLOCK_IO_MEDIA
+typedef struct {
+    UINT32  MediaId;
+    BOOLEAN RemovableMedia;
+    BOOLEAN MediaPresent;
+    BOOLEAN LogicalPartition;
+    BOOLEAN ReadOnly;
+    BOOLEAN WriteCaching;
+    UINT32  BlockSize;
+    UINT32  IoAlign;
+    EFI_LBA LastBlock;
+    EFI_LBA LowestAlignedLba;                   // added in Revision 2
+    UINT32  LogicalBlocksPerPhysicalBlock;      // added in Revision 2
+    UINT32  OptimalTransferLengthGranularity;   // added in Revision 3
+} EFI_BLOCK_IO_MEDIA;
+
+// EFI_BLOCK_RESET: UEFI Spec 2.10 section 13.9.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_BLOCK_RESET) (
+    IN EFI_BLOCK_IO_PROTOCOL *This,
+    IN BOOLEAN               ExtendedVerification
+);
+
+// EFI_BLOCK_READ: UEFI Spec 2.10 section 13.9.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_BLOCK_READ) (
+    IN EFI_BLOCK_IO_PROTOCOL *This,
+    IN UINT32                MediaId,
+    IN EFI_LBA               LBA,
+    IN UINTN                 BufferSize,
+    OUT VOID                 *Buffer
+);
+
+// EFI_BLOCK_WRITE: UEFI Spec 2.10 section 13.9.4
+typedef
+EFI_STATUS
+(EFIAPI *EFI_BLOCK_WRITE) (
+    IN EFI_BLOCK_IO_PROTOCOL *This,
+    IN UINT32                MediaId,
+    IN EFI_LBA               LBA,
+    IN UINTN                 BufferSize,
+    IN VOID                  *Buffer
+);
+
+// EFI_BLOCK_FLUSH: UEFI Spec 2.10 section 13.9.5
+typedef
+EFI_STATUS
+(EFIAPI *EFI_BLOCK_FLUSH) (
+    IN EFI_BLOCK_IO_PROTOCOL *This
+);
+
+typedef struct EFI_BLOCK_IO_PROTOCOL {
+    UINT64             Revision;
+    EFI_BLOCK_IO_MEDIA *Media;
+    EFI_BLOCK_RESET    Reset;
+    EFI_BLOCK_READ     ReadBlocks;
+    EFI_BLOCK_WRITE    WriteBlocks;
+    EFI_BLOCK_FLUSH    FlushBlocks;
+} EFI_BLOCK_IO_PROTOCOL;
+
+// EFI_DISK_IO_PROTOCOL: UEFI Spec 2.10 section 13.7.1
+#define EFI_DISK_IO_PROTOCOL_REVISION 0x00010000
+
+typedef struct EFI_DISK_IO_PROTOCOL EFI_DISK_IO_PROTOCOL; 
+
+// EFI_DISK_READ: UEFI Spec 2.10 section 13.7.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_DISK_READ) (
+    IN EFI_DISK_IO_PROTOCOL *This,
+    IN UINT32               MediaId,
+    IN UINT64               Offset,
+    IN UINTN                BufferSize,
+    OUT VOID                *Buffer
+);
+
+// EFI_DISK_WRITE: UEFI Spec 2.10 section 13.7.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_DISK_WRITE) (
+    IN EFI_DISK_IO_PROTOCOL *This,
+    IN UINT32               MediaId,
+    IN UINT64               Offset,
+    IN UINTN                BufferSize,
+    IN VOID                 *Buffer
+);
+
+typedef struct EFI_DISK_IO_PROTOCOL {
+    UINT64         Revision;
+    EFI_DISK_READ  ReadDisk;
+    EFI_DISK_WRITE WriteDisk;
+} EFI_DISK_IO_PROTOCOL;
+
+// EFI_PARTITION_INFO_PROTOCOL: UEFI Spec 2.10 section 13.18
+#define EFI_PARTITION_INFO_PROTOCOL_REVISION 0x0001000
+#define PARTITION_TYPE_OTHER                 0x00
+#define PARTITION_TYPE_MBR                   0x01
+#define PARTITION_TYPE_GPT                   0x02
+
+// MBR Partition Entry: UEFI Spec 2.10 section 5.2.1
+typedef struct {
+    UINT8 BootIndicator;
+    UINT8 StartHead;
+    UINT8 StartSector;
+    UINT8 StartTrack;
+    UINT8 OSIndicator;
+    UINT8 EndHead;
+    UINT8 EndSector;
+    UINT8 EndTrack;
+    UINT8 StartingLBA[4];
+    UINT8 SizeInLBA[4];
+} __attribute__ ((packed)) MBR_PARTITION_RECORD;
+
+// MBR Partition Table: UEFI Spec 2.10 section 5.2.1
+typedef struct {
+    UINT8                BootStrapCode[440];
+    UINT8                UniqueMbrSignature[4];
+    UINT8                Unknown[2];
+    MBR_PARTITION_RECORD Partition[4];
+    UINT16               Signature;
+} __attribute__ ((packed)) MASTER_BOOT_RECORD;
+
+// GPT Partition Entry: UEFI Spec 2.10 section 5.3.3
+typedef struct {
+    EFI_GUID PartitionTypeGUID;
+    EFI_GUID UniquePartitionGUID;
+    EFI_LBA  StartingLBA;
+    EFI_LBA  EndingLBA;
+    UINT64   Attributes;
+    CHAR16   PartitionName[36];
+} __attribute__ ((packed)) EFI_PARTITION_ENTRY;
+
+typedef struct {
+    UINT32 Revision;
+    UINT32 Type;
+    UINT8 System;
+    UINT8 Reserved[7];
+    union {
+        // MBR data
+        MBR_PARTITION_RECORD Mbr;
+
+        // GPT data
+        EFI_PARTITION_ENTRY Gpt;
+    } Info;
+} __attribute__ ((packed)) EFI_PARTITION_INFO_PROTOCOL;
 
 // EFI_TABLE_HEADER: UEFI Spec 2.10 section 4.2.1
 typedef struct {
