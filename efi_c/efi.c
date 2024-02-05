@@ -109,6 +109,49 @@ INTN memcmp(VOID *m1, VOID *m2, UINTN len) {
     return 0;
 }
 
+// =====================================================================
+// (ASCII) strlen:
+// Returns: length of string not including NULL terminator
+// =====================================================================
+UINTN strlen(char *s) {
+    UINTN len = 0;
+    while (*s) {
+        len++;
+        s++;
+    }
+
+    return len;
+}
+
+// =====================================================================
+// (ASCII) strstr:
+// Return a pointer to the beginning of the located
+//   substring, or NULL if the substring is not found.
+//   If needle is the empty string, the return value is always haystack
+//   itself.
+// =====================================================================
+char *strstr(char *haystack, char *needle) {
+    if (!needle) return haystack;
+
+    char *p = haystack;
+    while (*p) {
+        if (*p == *needle) {
+            if (!memcmp(p, needle, strlen(needle))) return p;
+        }
+        p++;
+    }
+
+    return NULL;
+}
+
+// =====================================================================
+// (ASCII) isdigit:
+// Returns: true/1 if char c >= 0 and <= 9, else 0/false
+// =====================================================================
+BOOLEAN isdigit(char c) {
+    return c >= '0' && c <= '9';
+}
+
 // ================================
 // CHAR16 strcpy:
 //   Copy src string into dst 
@@ -530,6 +573,241 @@ bool error(CHAR16 *fmt, ...) {
     get_key();  // User will respond with input before going on
 
     return result;
+}
+
+// =================================================================
+// Read a fully qualified file path in the EFI System Partition into 
+//   an output buffer. File path must start with root '\',
+//   escaped as needed by the caller with '\\'.
+//
+// Returns: non-null pointer to allocated buffer with file data, 
+//  allocated with Boot Services AllocatePool(), or NULL if not 
+//  found or error.
+//
+//  NOTE: Caller will have to use FreePool() on returned buffer to 
+//    free allocated memory.
+// =================================================================
+VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
+    VOID *file_buffer = NULL;
+    EFI_STATUS status;
+
+    // Get loaded image protocol first to grab device handle to use 
+    //   simple file system protocol on
+    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
+    status = bs->OpenProtocol(image,
+                              &lip_guid,
+                              (VOID **)&lip,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        goto cleanup;
+    }
+
+    // Get Simple File System Protocol for device handle for this loaded
+    //   image, to open the root directory for the ESP
+    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
+    status = bs->OpenProtocol(lip->DeviceHandle,
+                              &sfsp_guid,
+                              (VOID **)&sfsp,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not open Simple File System Protocol\r\n", status);
+        goto cleanup;
+    }
+
+    // Open root directory via OpenVolume()
+    EFI_FILE_PROTOCOL *root = NULL;
+    status = sfsp->OpenVolume(sfsp, &root);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not Open Volume for root directory in ESP\r\n", status);
+        goto cleanup;
+    }
+
+    // Open file in input path (qualified from root directory)
+    EFI_FILE_PROTOCOL *file = NULL;
+    status = root->Open(root, 
+                        &file, 
+                        path,
+                        EFI_FILE_MODE_READ,
+                        0);
+
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not open file '%s'\r\n", status, path);
+        goto cleanup;
+    }
+
+    // Get info for file, to grab file size
+    EFI_FILE_INFO file_info;
+    EFI_GUID fi_guid = EFI_FILE_INFO_ID;
+    UINTN buf_size = sizeof(EFI_FILE_INFO);
+    status = file->GetInfo(file, &fi_guid, &buf_size, &file_info);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not get file info for file '%s'\r\n", status, path);
+        goto file_cleanup;
+    }
+
+    // Allocate buffer for file
+    buf_size = file_info.FileSize;
+    status = bs->AllocatePool(EfiLoaderData, buf_size, &file_buffer);
+    if (EFI_ERROR(status) || buf_size != file_info.FileSize) {
+        error(u"Error %x; Could not allocate memory for file '%s'\r\n", status, path);
+        goto file_cleanup;
+    }
+
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not get file info for file '%s'\r\n", status, path);
+        goto file_cleanup;
+    }
+
+    // Read file into buffer
+    status = file->Read(file, &buf_size, file_buffer);
+    if (EFI_ERROR(status) || buf_size != file_info.FileSize) {
+        error(u"Error %x; Could not read file '%s' into buffer\r\n", status, path);
+        goto file_cleanup;
+    }
+
+    // Set output file size in buffer
+    *file_size = buf_size;
+
+    // Close open file/dir pointers
+    file_cleanup:
+    root->Close(root);
+    file->Close(file);
+
+    // Final cleanup before returning
+    cleanup:
+    // Close open protocols
+    bs->CloseProtocol(lip->DeviceHandle,
+                      &sfsp_guid,
+                      image,
+                      NULL);
+
+    bs->CloseProtocol(image,
+                      &lip_guid,
+                      image,
+                      NULL);
+
+    // Will return buffer with file data or NULL on errors
+    return file_buffer; 
+}
+
+// =================================================================
+// Read a file from a given disk (from input media ID), into an
+//   output buffer. 
+
+// Returns: non-null pointer to allocated buffer with data, 
+//  allocated with Boot Services AllocatePool(), or NULL if not 
+//  found or error.
+//
+//  NOTE: Caller will have to use FreePool() on returned buffer to 
+//    free allocated memory.
+// =================================================================
+VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID) {
+    VOID *buffer = NULL;
+    EFI_STATUS status = EFI_SUCCESS;
+
+    // Loop through and get Block IO protocol for input media ID, for entire disk
+    //   NOTE: This assumes the first Block IO found with logical partition false is the entire disk
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_BLOCK_IO_PROTOCOL *biop;
+    UINTN num_handles = 0;
+    EFI_HANDLE *handle_buffer = NULL;
+
+    status = bs->LocateHandleBuffer(ByProtocol, &bio_guid, NULL, &num_handles, &handle_buffer);
+    if (EFI_ERROR(status)) {
+        error(u"\r\nERROR: %x; Could not locate any Block IO Protocols.\r\n", status);
+        return buffer;
+    }
+
+    BOOLEAN found = false;
+    UINTN i = 0;
+    for (; i < num_handles; i++) {
+        status = bs->OpenProtocol(handle_buffer[i], 
+                                  &bio_guid,
+                                  (VOID **)&biop,
+                                  image,
+                                  NULL,
+                                  EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+
+        if (EFI_ERROR(status)) {
+            error(u"\r\nERROR: %x; Could not Open Block IO protocol on handle %u.\r\n", status, i);
+            // Close open protocol 
+            bs->CloseProtocol(handle_buffer[i],
+                              &bio_guid,
+                              image,
+                              NULL);
+            continue;
+        }
+
+        if (biop->Media->MediaId == disk_mediaID && !biop->Media->LogicalPartition) {
+            found = true;
+            break;
+        }
+
+        // Close open protocol when done
+        bs->CloseProtocol(handle_buffer[i],
+                          &bio_guid,
+                          image,
+                          NULL);
+    }
+
+    if (!found) {
+        error(u"\r\nERROR: Could not find Block IO protocol for disk with ID %u.\r\n", 
+              disk_mediaID);
+        return buffer;
+    }
+
+    // Get Disk IO Protocol on same handle as Block IO protocol
+    EFI_GUID dio_guid = EFI_DISK_IO_PROTOCOL_GUID;
+    EFI_DISK_IO_PROTOCOL *diop;
+    status = bs->OpenProtocol(handle_buffer[i], 
+                              &dio_guid,
+                              (VOID **)&diop,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(u"\r\nERROR: %x; Could not Open Disk IO protocol on handle.\r\n", status, i);
+        goto cleanup;
+    }
+
+    // Allocate buffer for data
+    status = bs->AllocatePool(EfiLoaderData, data_size, &buffer);
+    if (EFI_ERROR(status)) {
+        error(u"\r\nERROR: %x; Could not Allocate buffer for disk data.\r\n", status);
+        bs->CloseProtocol(handle_buffer[i],
+                          &dio_guid,
+                          image,
+                          NULL);
+        goto cleanup;
+    }
+
+    // Use Disk IO Read to read into allocated buffer
+    status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, buffer);
+    if (EFI_ERROR(status)) {
+        error(u"\r\nERROR: %x; Could not read Disk LBAs into buffer.\r\n", status);
+    }
+
+    // Close disk IO protocol when done
+    bs->CloseProtocol(handle_buffer[i],
+                      &dio_guid,
+                      image,
+                      NULL);
+
+    cleanup:
+    // Close open protocol when done
+    bs->CloseProtocol(handle_buffer[i],
+                      &bio_guid,
+                      image,
+                      NULL);
+
+    return buffer;
 }
 
 // ====================
@@ -1684,6 +1962,162 @@ EFI_STATUS print_block_io_partitions(void) {
     return EFI_SUCCESS;
 }
 
+// ================================================
+// Get Media ID value for this running disk image
+// ================================================
+EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
+    EFI_STATUS status = EFI_SUCCESS;
+
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_BLOCK_IO_PROTOCOL *biop;
+
+    // Get media ID for this disk image 
+    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
+    status = bs->OpenProtocol(image,
+                              &lip_guid,
+                              (VOID **)&lip,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        return status;
+    }
+
+    // Get Block IO protocol for loaded image's device handle
+    status = bs->OpenProtocol(lip->DeviceHandle,
+                              &bio_guid,
+                              (VOID **)&biop,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(u"\r\nERROR: %x; Could not open Block IO Protocol for this loaded image.\r\n", status);
+        return status;
+    }
+
+    *mediaID = biop->Media->MediaId;  // Media ID for this running disk image itself
+
+    // Close open protocols when done
+    bs->CloseProtocol(lip->DeviceHandle,
+                      &bio_guid,
+                      image,
+                      NULL);
+
+    bs->CloseProtocol(image,
+                      &lip_guid,
+                      image,
+                      NULL);
+
+    return EFI_SUCCESS;
+}
+
+// ==========================================
+// Read a file from the basic data partition
+// ==========================================
+EFI_STATUS load_kernel(void) {
+    VOID *file_buffer = NULL;
+    VOID *disk_buffer = NULL;
+    EFI_STATUS status = EFI_SUCCESS;
+
+    char *data_file = "test.txt"; // Change to kernel name e.g. "kernel.bin"
+    CHAR16 *data_file_u16 = u"test.txt"; // Change to kernel name e.g. "kernel.bin"
+
+    // Print file info for DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
+    CHAR16 *file_name = u"\\EFI\\BOOT\\DATAFLS.INF";
+
+    cout->ClearScreen(cout);
+
+    UINTN buf_size = 0;
+    file_buffer = read_esp_file_to_buffer(file_name, &buf_size);
+    if (!file_buffer) {
+        error(u"Could not find or read file '%s' to buffer\r\n", file_name);
+        goto exit;
+    }
+
+    // Parse data from DATAFLS.INF file to get disk LBA and file size
+    char *str_pos = NULL;
+    str_pos = strstr(file_buffer, data_file);
+    if (!str_pos) {
+        error(u"Could not find file '%s' in data partition\r\n", data_file);
+        goto cleanup;
+    }
+
+    str_pos = strstr(file_buffer, "FILE_SIZE=");
+    if (!str_pos) {
+        error(u"Could not find file size from buffer for '%s'\r\n", file_name);
+        goto cleanup;
+    }
+
+    // TODO: Use an atoi function here instead?
+    str_pos += strlen("FILE_SIZE=");
+    UINTN file_size = 0;
+    while (isdigit(*str_pos)) {
+        file_size = file_size * 10 + *str_pos - '0';    // Convert char -> int, add next decimal digit to number
+        str_pos++;
+    }
+
+    str_pos = strstr(file_buffer, "DISK_LBA=");
+    if (!str_pos) {
+        error(u"Could not find disk lba value from buffer for '%s'\r\n", file_name);
+        goto cleanup;
+    }
+
+    str_pos += strlen("DISK_LBA=");
+    UINTN disk_lba = 0;
+    while (isdigit(*str_pos)) {
+        disk_lba = disk_lba * 10 + *str_pos - '0';    // Convert char -> int, add next decimal digit to number
+        str_pos++;
+    }
+
+    // Get media ID (disk number for Block IO protocol Media) for this running disk image
+    UINT32 image_mediaID = 0;
+    status = get_disk_image_mediaID(&image_mediaID);
+    if (EFI_ERROR(status)) {
+        error(u"Error: %x; Could not find or get MediaID value for disk image\r\n", status);
+        bs->FreePool(file_buffer);  // Free memory allocated for ESP file
+        goto exit;
+    }
+
+    // Read disk lbas for file into buffer
+    disk_buffer = read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID);
+    if (!disk_buffer) {
+        error(u"Could not find or read data partition file to buffer\r\n");
+        bs->FreePool(file_buffer);  // Free memory allocated for ESP file
+        goto exit;
+    }
+
+    // DEBUGGING: Print data partition file contents (assuming ascii text file)
+    // Print buffer contents
+    printf(u"\r\nDisk Contents for File %s:\r\n", data_file_u16);
+
+    char *pos = (char *)disk_buffer;
+    for (UINTN bytes = file_size; bytes > 0; bytes--) {
+        CHAR16 str[2];
+        str[0] = *pos;
+        str[1] = u'\0';
+        if (*pos == '\n') {
+            // Convert LF newline to CRLF
+            printf(u"\r\n");
+        } else {
+            printf(u"%s", str);
+        }
+
+        pos++;
+    }
+
+    // Final cleanup
+    cleanup:
+    bs->FreePool(file_buffer);  // Free memory allocated for ESP file
+    bs->FreePool(disk_buffer);  // Free memory allocated for data partition file
+
+    exit:
+    printf(u"Press any key to go back...\r\n");
+    get_key();
+    return EFI_SUCCESS;
+}
+
 // ====================
 // Entry Point
 // ====================
@@ -1709,6 +2143,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Test Mouse",
         u"Read ESP Files",
         u"Print Block IO Partitions",
+        u"Load Kernel",
     };
 
     // Functions to call for each menu option
@@ -1718,6 +2153,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         test_mouse,
         read_esp_files,
         print_block_io_partitions,
+        load_kernel,
     };
 
     // Screen loop

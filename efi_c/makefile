@@ -7,6 +7,13 @@ DEPENDS = $(OBJS:.o=.d)
 TARGET = BOOTX64.EFI
 TEST_FILE = test.txt
 
+# Flat binary PIE kernel binary
+KERNEL_BIN = kernel.bin
+# ELF64 PIE kernel binary
+KERNEL_ELF = kernel.elf
+# PE32+ PIE kernel binary
+KERNEL_PE  = kernel.pe
+
 # Uncomment disk image exe & shell script for Windows
 #DISK_IMG_PGM = write_gpt.exe
 #QEMU_SCRIPT = qemu.bat
@@ -16,16 +23,16 @@ DISK_IMG_PGM = write_gpt
 QEMU_SCRIPT = qemu.sh
 
 # Uncomment CC/LDFLAGS for gcc
-#CC = x86_64-w64-mingw32-gcc 
-#LDFLAGS = \
+CC = x86_64-w64-mingw32-gcc 
+LDFLAGS = \
 	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
 # Uncomment CC/LDFLAGS for clang
-CC = clang \
+#CC = clang \
 	-target x86_64-unknown-windows 
-LDFLAGS = \
+#LDFLAGS = \
 	-target x86_64-unknown-windows \
 	-nostdlib \
 	-fuse-ld=lld-link \
@@ -53,6 +60,13 @@ $(TARGET): $(OBJS)
 $(TEST_FILE):
 	echo TESTING > $@
 	cp $@ ../UEFI-GPT-image-creator/
+
+#TODO:
+#$(KERNEL_BIN): 
+
+#$(KERNEL_ELF): 
+
+#$(KERNEL_PE): 
 
 -include $(DEPENDS)
 
