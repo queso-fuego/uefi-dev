@@ -3,3 +3,7 @@
 *.o
 *.INF
 *.vhd
+*.bin
+*.obj
+*.elf
+*.pe
