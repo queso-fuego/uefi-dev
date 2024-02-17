@@ -282,6 +282,22 @@ BOOLEAN isdigit(char c) {
     return c >= '0' && c <= '9';
 }
 
+// =============================================
+// (ASCII) atoi: 
+// Converts intial value of input string to 
+//   int.
+// Returns converted value or 0 on error
+// =============================================
+INTN atoi(char *s) {
+    INTN result = 0;
+    while (isdigit(*s)) {
+        result = (result * 10) + (*s - '0');
+        s++;
+    }
+
+    return result;
+}
+
 // ================================
 // CHAR16 strcpy:
 //   Copy src string into dst 
@@ -2183,17 +2199,17 @@ VOID *load_elf(VOID *elf_buffer) {
         // Update max alignment as needed
         if (max_alignment < phdr->p_align) max_alignment = phdr->p_align;
 
-        UINTN mem_begin = phdr->p_vaddr;        
-        UINTN mem_end   = phdr->p_vaddr + phdr->p_memsz + max_alignment-1;
+        UINTN hdr_begin = phdr->p_vaddr;        
+        UINTN hdr_end   = phdr->p_vaddr + phdr->p_memsz + max_alignment-1;
 
         // Limit memory range to aligned values
         //   e.g. 4096-1 = 4095 or 0x00000FFF (32 bit); ~4095 = 0xFFFFF000
-        mem_begin &= ~(max_alignment-1);    
-        mem_end   &= ~(max_alignment-1);   
+        hdr_begin &= ~(max_alignment-1);    
+        hdr_end   &= ~(max_alignment-1);   
 
         // Get new minimum & maximum memory bounds for all program sections
-        if (mem_begin < mem_min) mem_min = mem_begin;
-        if (mem_end > mem_max)   mem_max = mem_end;
+        if (hdr_begin < mem_min) mem_min = hdr_begin;
+        if (hdr_end   > mem_max) mem_max = hdr_end;
     }
 
     UINTN max_memory_needed = mem_max - mem_min;   
@@ -2222,11 +2238,11 @@ VOID *load_elf(VOID *elf_buffer) {
         //   we use the same relative addresses.
         UINTN relative_offset = phdr->p_vaddr - mem_min;
 
-        // Read p_memsz amount of data from p_offset in original file buffer,
+        // Read p_filesz amount of data from p_offset in original file buffer,
         //   to the same relative offset of p_vaddr in new buffer
         UINT8 *dst = (UINT8 *)program_buffer + relative_offset; 
         UINT8 *src = (UINT8 *)elf_buffer     + phdr->p_offset;
-        UINT32 len = phdr->p_memsz;
+        UINT32 len = phdr->p_filesz;
         memcpy(dst, src, len);
     }
 
@@ -2378,13 +2394,8 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;
     }
 
-    // TODO: Use an atoi function here instead?
     str_pos += strlen("FILE_SIZE=");
-    UINTN file_size = 0;
-    while (isdigit(*str_pos)) {
-        file_size = file_size * 10 + *str_pos - '0';    // Convert char -> int, add next decimal digit to number
-        str_pos++;
-    }
+    UINTN file_size = atoi(str_pos);
 
     str_pos = strstr(file_buffer, "DISK_LBA=");
     if (!str_pos) {
@@ -2393,11 +2404,7 @@ EFI_STATUS load_kernel(void) {
     }
 
     str_pos += strlen("DISK_LBA=");
-    UINTN disk_lba = 0;
-    while (isdigit(*str_pos)) {
-        disk_lba = disk_lba * 10 + *str_pos - '0';    // Convert char -> int, add next decimal digit to number
-        str_pos++;
-    }
+    UINTN disk_lba = atoi(str_pos);
 
     printf(u"File Size: %u, Disk LBA: %u\r\n", file_size, disk_lba);
 
