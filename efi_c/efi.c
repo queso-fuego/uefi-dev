@@ -71,176 +71,6 @@ void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     image = handle;
 }
 
-// ====================================
-// memset for compiling with clang/gcc:
-// Sets len bytes of dst memory with int c
-// Returns dst buffer
-// ================================
-VOID *memset(VOID *dst, UINT8 c, UINTN len) {
-    UINT8 *p = dst;
-    for (UINTN i = 0; i < len; i++)
-        p[i] = c;
-
-    return dst;
-}
-
-// ====================================
-// memcpy for compiling with clang/gcc:
-// Sets len bytes of dst memory from src.
-// Assumes memory does not overlap!
-// Returns dst buffer
-// ================================
-VOID *memcpy(VOID *dst, VOID *src, UINTN len) {
-    UINT8 *p = dst;
-    UINT8 *q = src;
-    for (UINTN i = 0; i < len; i++)
-        p[i] = q[i];
-
-    return dst;
-}
-
-// =============================================================================
-// memcmp:
-// Compare up to len bytes of m1 and m2, stop at first
-//   point that they don't equal.
-// Returns 0 if equal, >0 if m1 is greater than m2, <0 if m2 is greater than m1
-// =============================================================================
-INTN memcmp(VOID *m1, VOID *m2, UINTN len) {
-    UINT8 *p = m1;
-    UINT8 *q = m2;
-    for (UINTN i = 0; i < len; i++)
-        if (p[i] != q[i]) return (INTN)(p[i]) - (INTN)(q[i]);
-
-    return 0;
-}
-
-// =====================================================================
-// (ASCII) strlen:
-// Returns: length of string not including NULL terminator
-// =====================================================================
-UINTN strlen(char *s) {
-    UINTN len = 0;
-    while (*s) {
-        len++;
-        s++;
-    }
-
-    return len;
-}
-
-// =====================================================================
-// (ASCII) strstr:
-// Return a pointer to the beginning of the located
-//   substring, or NULL if the substring is not found.
-//   If needle is the empty string, the return value is always haystack
-//   itself.
-// =====================================================================
-char *strstr(char *haystack, char *needle) {
-    if (!needle) return haystack;
-
-    char *p = haystack;
-    while (*p) {
-        if (*p == *needle) {
-            if (!memcmp(p, needle, strlen(needle))) return p;
-        }
-        p++;
-    }
-
-    return NULL;
-}
-
-// =====================================================================
-// (ASCII) isdigit:
-// Returns: true/1 if char c >= 0 and <= 9, else 0/false
-// =====================================================================
-BOOLEAN isdigit(char c) {
-    return c >= '0' && c <= '9';
-}
-
-// =============================================
-// (ASCII) atoi: 
-// Converts intial value of input string to 
-//   int.
-// Returns converted value or 0 on error
-// =============================================
-INTN atoi(char *s) {
-    INTN result = 0;
-    while (isdigit(*s)) {
-        result = (result * 10) + (*s - '0');
-        s++;
-    }
-
-    return result;
-}
-
-// ================================
-// CHAR16 strcpy:
-//   Copy src string into dst 
-//   Returns dst
-// ================================
-CHAR16 *strcpy_u16(CHAR16 *dst, CHAR16 *src) {
-    if (!dst) return NULL;
-    if (!src) return dst;
-
-    CHAR16 *result = dst;
-    while (*src) *dst++ = *src++;
-
-    *dst = u'\0';   // Null terminate
-
-    return result;
-}
-
-// ================================
-// CHAR16 strncmp:
-//   Compare 2 strings, each character, up to at most len bytes
-//   Returns difference in strings at last point of comparison:
-//   0 if strings are equal, <0 if s2 is greater, >0 if s1 is greater
-// ================================
-INTN strncmp_u16(CHAR16 *s1, CHAR16 *s2, UINTN len) {
-    if (len == 0) return 0;
-
-    while (len > 0 && *s1 && *s2 && *s1 == *s2) {
-        s1++;
-        s2++;
-        len--;
-    }
-
-    return *s1 - *s2;
-}
-
-// ================================
-// CHAR16 strrchr:
-//   Return last occurrence of C in string
-// ================================
-CHAR16 *strrchr_u16(CHAR16 *str, CHAR16 c) {
-    CHAR16 *result = NULL;
-
-    while (*str) {
-        if (*str == c) result = str;
-        str++;
-    }
-
-    return result;
-}
-
-// ================================
-// CHAR16 strcat:
-//   Concatenate src string onto the end of dst string, at
-//   dst's original null terminator position.
-//  Returns dst
-// ================================
-CHAR16 *strcat_u16(CHAR16 *dst, CHAR16 *src) {
-    CHAR16 *s = dst;
-
-    while (*s) s++; // Go until null terminator
-
-    while (*src) *s++ = *src++;
-
-    *s = u'\0'; // I guess this isn't normal libc behavior? But seems better to null terminate
-
-    return dst; 
-}
-
 // ================================
 // Print a number to stderr
 // ================================
@@ -1562,12 +1392,6 @@ EFI_STATUS test_mouse(void) {
 VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
     (VOID)event; // Suppress compiler warning
 
-    // Timer context will be the text mode screen bounds
-    typedef struct {
-        UINT32 rows; 
-        UINT32 cols;
-    } Timer_Context;
-
     Timer_Context context = *(Timer_Context *)Context;
 
     // Save current cursor position before printing date/time
@@ -2248,7 +2072,7 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
                               &mmap->desc_version);
 
     if (EFI_ERROR(status) && status != EFI_BUFFER_TOO_SMALL) {
-        error(u"Could not find or read data partition file to buffer\r\n");
+        error(u"Could not get initial memory map size.\r\n");
         return status;
     }
 
@@ -2396,7 +2220,7 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;
     }
 
-    // Call the kernel here
+    // Call the kernel/OS here; Fully in control now, not in EFI anymore!
     entry_point(kparms);
 
     // Should not return to this point!
@@ -2442,6 +2266,7 @@ EFI_STATUS print_memory_map(void) {
                 desc->NumberOfPages, 
                 desc->Attribute);
 
+        // Add to usable memory count depending on type
         if (desc->Type == EfiLoaderCode         || 
             desc->Type == EfiLoaderData         || 
             desc->Type == EfiBootServicesCode   || 
