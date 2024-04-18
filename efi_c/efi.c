@@ -1,131 +1,6 @@
 #include <stdarg.h>
 #include "efi.h"
-
-// -----------------
-// Global Typedefs 
-// -----------------
-// ELF Header - x86_64
-typedef struct {
-    struct {
-        UINT8  ei_mag0;
-        UINT8  ei_mag1;
-        UINT8  ei_mag2;
-        UINT8  ei_mag3;
-        UINT8  ei_class;
-        UINT8  ei_data;
-        UINT8  ei_version;
-        UINT8  ei_osabi;
-        UINT8  ei_abiversion;
-        UINT8  ei_pad[7];
-    } e_ident;
-
-    UINT16 e_type;
-    UINT16 e_machine;
-    UINT32 e_version;
-    UINT64 e_entry;
-    UINT64 e_phoff;
-    UINT64 e_shoff;
-    UINT32 e_flags;
-    UINT16 e_ehsize;
-    UINT16 e_phentsize;
-    UINT16 e_phnum;
-    UINT16 e_shentsize;
-    UINT16 e_shnum;
-    UINT16 e_shstrndx;
-} __attribute__ ((packed)) ELF_Header_64;
-
-// ELF Program Header - x86_64
-typedef struct {
-    UINT32 p_type;
-    UINT32 p_flags;
-    UINT64 p_offset;
-    UINT64 p_vaddr;
-    UINT64 p_paddr;
-    UINT64 p_filesz;
-    UINT64 p_memsz;
-    UINT64 p_align;
-} __attribute__ ((packed)) ELF_Program_Header_64;
-
-// Elf Header e_type values
-typedef enum {
-    ET_EXEC = 0x2,
-    ET_DYN  = 0x3,
-} ELF_EHEADER_TYPE;
-
-// Elf Program header p_type values
-typedef enum {
-    PT_NULL = 0x0,
-    PT_LOAD = 0x1,  // Loadable
-} ELF_PHEADER_TYPE;
-
-// PE Structs/types
-// PE32+ COFF File Header
-typedef struct {
-    UINT16 Machine;             // 0x8664 = x86_64
-    UINT16 NumberOfSections;    // # of sections to load for program
-    UINT32 TimeDateStamp;
-    UINT32 PointerToSymbolTable;
-    UINT32 NumberOfSymbols;
-    UINT16 SizeOfOptionalHeader;
-    UINT16 Characteristics;
-} __attribute__ ((packed)) PE_Coff_File_Header_64;
-
-// COFF File Header Characteristics
-typedef enum {
-    IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002,
-} PE_COFF_CHARACTERISTICS;
-
-// PE32+ Optional Header
-typedef struct {
-    UINT16 Magic;                       // 0x10B = PE32, 0x20B = PE32+
-    UINT8  MajorLinkerVersion;
-    UINT8  MinorLinkerVersion;
-    UINT32 SizeOfCode;
-    UINT32 SizeOfInitializedData;
-    UINT32 SizeOfUninitializedData;
-    UINT32 AddressOfEntryPoint;         // Entry Point address (RVA from image base in memory)
-    UINT32 BaseOfCode;
-    UINT64 ImageBase;
-    UINT32 SectionAlignment;
-    UINT32 FileAlignment;
-    UINT16 MajorOperatingSystemVersion;
-    UINT16 MinorOperatingSystemVersion;
-    UINT16 MajorImageVersion;
-    UINT16 MinorImageVersion;
-    UINT16 MajorSubsystemVersion;
-    UINT16 MinorSubsystemVersion;
-    UINT32 Win32VersionValue;
-    UINT32 SizeOfImage;                 // Size in bytes of entire file (image) incl. headers
-    UINT32 SizeOfHeaders;
-    UINT32 CheckSum;
-    UINT16 Subsystem;
-    UINT16 DllCharacteristics;
-    UINT64 SizeOfStackReserve;
-    UINT64 SizeOfStackCommit;
-    UINT64 SizeOfHeapReserve;
-    UINT64 SizeOfHeapCommit;
-    UINT32 LoaderFlags;
-    UINT32 NumberOfRvaAndSizes;
-} __attribute__ ((packed)) PE_Optional_Header_64;
-
-// Optional Header DllCharacteristics
-typedef enum {
-    IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040, // PIE executable
-} PE_OPTIONAL_HEADER_DLLCHARACTERISTICS;
-
-// PE32+ Section Headers - Immediately following the Optional Header
-typedef struct {
-    UINT64 Name;                                // 8 byte, null padded UTF-8 string
-    UINT32 VirtualSize;                         // Size in memory; If >SizeOfRawData, the difference is 0-padded
-    UINT32 VirtualAddress;                      // RVA from image base in memory
-    UINT32 SizeOfRawData;                       // Size of actual data (similar to ELF FileSize)
-    UINT32 PointerToRawData;                    // Address of actual data
-    UINT32 PointerToRelocations;
-    UINT32 PointerToLinenumbers;
-    UINT16 NumberOfRelocations;
-    UINT16 NumberOfLinenumbers;
-    UINT32 Characteristics;
-}__attribute__ ((packed)) PE_Section_Header_64;
+#include "efi_lib.h"
 
 // -----------------
 // Global macros
@@ -2358,6 +2233,50 @@ VOID *load_pe(VOID *pe_buffer) {
     return entry_point;
 }
 
+// ==========================
+// Get Memory Map from UEFI
+// ==========================
+EFI_STATUS get_memory_map(Memory_Map_Info *mmap) { 
+    memset(mmap, 0, sizeof *mmap);  // Ensure input parm is initialized
+
+    // Get initial memory map size (send 0 for map size)
+    EFI_STATUS status = EFI_SUCCESS;
+    status = bs->GetMemoryMap(&mmap->size,
+                              mmap->map,
+                              &mmap->key,
+                              &mmap->desc_size,
+                              &mmap->desc_version);
+
+    if (EFI_ERROR(status) && status != EFI_BUFFER_TOO_SMALL) {
+        error(u"Could not find or read data partition file to buffer\r\n");
+        return status;
+    }
+
+    // Allocate buffer for actual memory map for size in mmap->size;
+    //   need to allocate enough space for an additional memory descriptor or 2 in the map due to
+    //   this allocation itself.
+    mmap->size += mmap->desc_size * 2;  
+    status = bs->AllocatePool(EfiLoaderData, mmap->size,(VOID **)&mmap->map);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not allocate buffer for memory map '%s'\r\n", status);
+        return status;
+    }
+
+    // Call get memory map again to get the actual memory map now that the buffer is the corerct
+    //   size
+    status = bs->GetMemoryMap(&mmap->size,
+                              mmap->map,
+                              &mmap->key,
+                              &mmap->desc_size,
+                              &mmap->desc_version);
+    if (EFI_ERROR(status)) {
+        error(u"Error %x; Could not get UEFI memory map! :(\r\n", status);
+        return status;
+    }
+
+    return EFI_SUCCESS;
+}
+
 // ==========================================
 // Read a file from the basic data partition
 // ==========================================
@@ -2425,14 +2344,6 @@ EFI_STATUS load_kernel(void) {
         goto exit;
     }
 
-    // Set up parameters to send to kernel
-    typedef struct {
-        void *memory_map;   // TODO: Get memory map and fill this out
-        EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE gop_mode;
-    } Kernel_Parms;
-
-    Kernel_Parms kparms = {0};
-
     // Get GOP info for kernel parms
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
@@ -2442,6 +2353,9 @@ EFI_STATUS load_kernel(void) {
         error(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
         return status;
     }
+
+    // Initialize Kernel Parameters
+    Kernel_Parms kparms = {0};  // Defined in efi_lib.h
 
     kparms.gop_mode = *gop->Mode;
     void EFIAPI (*entry_point)(Kernel_Parms) = NULL;
@@ -2472,11 +2386,15 @@ EFI_STATUS load_kernel(void) {
     // Close Timer Event so that it does not continue to fire off
     bs->CloseEvent(timer_event);
 
-    // TODO: Get Memory Map
+    // Get Memory Map
+    if (EFI_ERROR(get_memory_map(&kparms.mmap))) 
+        goto cleanup;
 
-    // TODO: Fill out kparms.memory_map with memory map info
-
-    // TODO: Exit boot services before calling kernel
+    // Exit boot services before calling kernel
+    if (EFI_ERROR(bs->ExitBootServices(image, kparms.mmap.key))) {
+        error(u"\r\nERROR: %x; Could not exit boot services!\r\n", status);
+        goto cleanup;
+    }
 
     // Call the kernel here
     entry_point(kparms);
@@ -2490,6 +2408,58 @@ EFI_STATUS load_kernel(void) {
     bs->FreePool(disk_buffer);  // Free memory allocated for data partition file
 
     exit:
+    printf(u"\r\nPress any key to go back...\r\n");
+    get_key();
+    return EFI_SUCCESS;
+}
+
+// ====================
+// Print Memory Map
+// ====================
+EFI_STATUS print_memory_map(void) { 
+    cout->ClearScreen(cout);
+
+    // Close Timer Event for cleanup
+    bs->CloseEvent(timer_event);
+
+    Memory_Map_Info mmap = {0};
+    get_memory_map(&mmap);
+
+    // Print memory map descriptor values
+    printf(u"Memory map: Size %u, Descriptor size: %u, # of descriptors: %u, key: %x\r\n",
+            mmap.size, mmap.desc_size, mmap.size / mmap.desc_size, mmap.key);
+
+    UINTN usable_bytes = 0; // "Usable" memory for an OS or similar, not firmware/device reserved
+    for (UINTN i = 0; i < mmap.size / mmap.desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap.map + (i * mmap.desc_size));
+
+        printf(u"%u: Typ: %u, Phy: %x, Vrt: %x, Pgs: %u, Att: %x\r\n",
+                i,
+                desc->Type, 
+                desc->PhysicalStart, 
+                desc->VirtualStart, 
+                desc->NumberOfPages, 
+                desc->Attribute);
+
+        if (desc->Type == EfiLoaderCode         || 
+            desc->Type == EfiLoaderData         || 
+            desc->Type == EfiBootServicesCode   || 
+            desc->Type == EfiBootServicesData   || 
+            desc->Type == EfiConventionalMemory || 
+            desc->Type == EfiPersistentMemory) {
+
+            usable_bytes += desc->NumberOfPages * 4096;
+        }
+
+        // Pause every ~20 lines
+        if (i > 0 && i % 20 == 0) 
+            get_key();
+    }
+
+    printf(u"\r\nUsable memory: %u / %u MiB / %u GiB\r\n",
+            usable_bytes, usable_bytes / (1024 * 1024), usable_bytes / (1024 * 1024 * 1024));
+
     printf(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
@@ -2520,6 +2490,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Test Mouse",
         u"Read ESP Files",
         u"Print Block IO Partitions",
+        u"Print Memory Map",
         u"Load Kernel",
     };
 
@@ -2530,6 +2501,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         test_mouse,
         read_esp_files,
         print_block_io_partitions,
+        print_memory_map,
         load_kernel,
     };
 
@@ -2553,6 +2525,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         Timer_Context context;
         context.rows = rows;
         context.cols = cols;
+
+        // Close Timer Event for cleanup
+        bs->CloseEvent(timer_event);
 
         // Create timer event, to print date/time on screen every ~1second
         bs->CreateEvent(EVT_TIMER | EVT_NOTIFY_SIGNAL,
@@ -2626,9 +2601,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     break;
 
                 case SCANCODE_ESC:
-                    // Close Timer Event for cleanup
-                    bs->CloseEvent(timer_event);
-
                     // Escape key: power off
                     rs->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
 

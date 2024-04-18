@@ -7,11 +7,11 @@ DEPENDS = $(OBJS:.o=.d)
 TARGET = BOOTX64.EFI
 
 # Flat binary PIE kernel binary
-#KERNEL = kernel.bin
+KERNEL = kernel.bin
 # ELF64 PIE kernel binary
 #KERNEL = kernel.elf
 # PE32+ PIE kernel binary
-KERNEL = kernel.pe
+#KERNEL = kernel.pe
 
 # Uncomment disk image exe & shell script for Windows
 #DISK_IMG_FOLDER = ..\UEFI-GPT-image-creator\

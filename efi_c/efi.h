@@ -144,8 +144,9 @@ typedef enum {
 #define ENCODE_ERROR(x) (TOP_BIT | (x))
 #define EFI_ERROR(x) ((INTN)((UINTN)(x)) < 0)
 
-#define EFI_UNSUPPORTED  ENCODE_ERROR(3)
-#define EFI_DEVICE_ERROR ENCODE_ERROR(7)
+#define EFI_UNSUPPORTED      ENCODE_ERROR(3)
+#define EFI_BUFFER_TOO_SMALL ENCODE_ERROR(5)
+#define EFI_DEVICE_ERROR     ENCODE_ERROR(7)
 
 // EFI_GRAPHICS_OUTPUT_PROTOCOL
 typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
@@ -505,6 +506,26 @@ typedef struct EFI_ABSOLUTE_POINTER_PROTOCOL {
     EFI_ABSOLUTE_POINTER_MODE      *Mode;
 } EFI_ABSOLUTE_POINTER_PROTOCOL;
 
+//EFI_MEMORY_DESCRIPTOR
+typedef struct {
+    UINT32               Type;
+    EFI_PHYSICAL_ADDRESS PhysicalStart;
+    EFI_VIRTUAL_ADDRESS  VirtualStart;
+    UINT64               NumberOfPages;
+    UINT64               Attribute;
+} EFI_MEMORY_DESCRIPTOR;
+
+// EFI_GET_MEMORY_MAP: UEFI Spec 2.10 section 7.2.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_GET_MEMORY_MAP) (
+    IN OUT UINTN              *MemoryMapSize,
+    OUT EFI_MEMORY_DESCRIPTOR *MemoryMap,
+    OUT UINTN                 *MapKey,
+    OUT UINTN                 *DescriptorSize,
+    OUT UINT32                *DescriptorVersion
+);
+
 // EFI_ALLOCATE_POOL: UEFI Spec 2.10 section 7.2.4
 typedef
 EFI_STATUS
@@ -596,6 +617,14 @@ typedef
 EFI_STATUS
 (EFIAPI *EFI_CLOSE_EVENT) (
     IN EFI_EVENT Event
+);
+
+// EFI_EXIT_BOOT_SERVICES: UEFI Spec 2.10 section 7.4.6
+typedef
+EFI_STATUS
+(EFIAPI *EFI_EXIT_BOOT_SERVICES) (
+    IN EFI_HANDLE ImageHandle,
+    IN UINTN      MapKey
 );
 
 // EFI_SET_WATCHDOG_TIMER: UEFI Spec 2.10 7.5.1
@@ -1088,11 +1117,11 @@ typedef struct {
     //
     // Memory Services
     //
-    void*         AllocatePages;
-    void*         FreePages;
-    void*         GetMemoryMap;
-    EFI_ALLOCATE_POOL AllocatePool;
-    EFI_FREE_POOL     FreePool;
+    void*              AllocatePages;
+    void*              FreePages;
+    EFI_GET_MEMORY_MAP GetMemoryMap;
+    EFI_ALLOCATE_POOL  AllocatePool;
+    EFI_FREE_POOL      FreePool;
 
     //
     // Event & Timer Services
@@ -1120,11 +1149,11 @@ typedef struct {
     //
     // Image Services
     //
-    void* LoadImage;
-    void* StartImage;
-    void* Exit;
-    void* UnloadImage;
-    void* ExitBootServices;
+    void*                  LoadImage;
+    void*                  StartImage;
+    void*                  Exit;
+    void*                  UnloadImage;
+    EFI_EXIT_BOOT_SERVICES ExitBootServices;
 
     //
     // Miscellaneous Services
