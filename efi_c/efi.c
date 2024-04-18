@@ -2285,6 +2285,9 @@ EFI_STATUS print_memory_map(void) {
     printf(u"\r\nUsable memory: %u / %u MiB / %u GiB\r\n",
             usable_bytes, usable_bytes / (1024 * 1024), usable_bytes / (1024 * 1024 * 1024));
 
+    // Free allocated buffer for memory map
+    bs->FreePool(mmap.map);
+
     printf(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
