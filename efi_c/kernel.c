@@ -6,7 +6,7 @@
 UINTN get_color(UINTN choice);
 
 // MAIN
-void EFIAPI kmain(Kernel_Parms kargs) {
+__attribute__((section(".kernel"))) void EFIAPI kmain(Kernel_Parms kargs) {
     // Grab Framebuffer/GOP info
     UINT32 *fb = (UINT32 *)kargs.gop_mode.FrameBufferBase;  // BGRA8888
     UINT32 xres = kargs.gop_mode.Info->PixelsPerScanLine;

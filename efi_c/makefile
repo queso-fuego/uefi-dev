@@ -65,13 +65,13 @@ $(TEST_FILE):
 # Flat binary - ELF/Clang
 kernel.bin: kernel.c
 	clang -c $(CFLAGS) -fPIE -o kernel.o $<
-	ld -nostdlib -e kmain --oformat binary -pie -o $@ kernel.o 
+	ld -nostdlib -Tkernel.ld --oformat binary -pie -o $@ kernel.o 
 	cp $@ $(DISK_IMG_FOLDER)
 
 # Flat binary - MINGW GCC (PE)
 #kernel.bin: kernel.c
 #	x86_64-w64-mingw32-gcc -c $(CFLAGS) -fPIE -o kernel.o $<
-#	x86_64-w64-mingw32-ld -nostdlib -e kmain -pie -o kernel.obj kernel.o
+#	x86_64-w64-mingw32-ld -nostdlib -Tkernel.ld --image-base=0 -pie -o kernel.obj kernel.o
 #	objcopy -O binary kernel.obj $@
 #	cp $@ $(DISK_IMG_FOLDER)
 

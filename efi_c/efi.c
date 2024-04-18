@@ -2086,7 +2086,7 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
         return status;
     }
 
-    // Call get memory map again to get the actual memory map now that the buffer is the corerct
+    // Call get memory map again to get the actual memory map now that the buffer is the correct
     //   size
     status = bs->GetMemoryMap(&mmap->size,
                               mmap->map,
