@@ -1,4 +1,5 @@
 #include <stdarg.h>
+#include <stdalign.h>
 #include "efi.h"
 #include "efi_lib.h"
 
@@ -25,7 +26,8 @@
 #define px_BLACK {0x00,0x00,0x00,0x00}
 #define px_BLUE  {0x98,0x00,0x00,0x00}  // EFI_BLUE
 
-#define PAGE_SIZE 4096  // 4KiB
+#define PAGE_PHYS_ADDR_MASK 0x000FFFFFFFFFF000  // Page aligned 52 bit address
+#define PAGE_SIZE 4096                          // 4KiB
 
 #ifdef __clang__
 int _fltused = 0;   // If using floating point code & lld-link, need to define this
@@ -34,12 +36,13 @@ int _fltused = 0;   // If using floating point code & lld-link, need to define t
 // -----------------
 // Global variables
 // -----------------
-EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cout = NULL;  // Console output
-EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin  = NULL;  // Console input
-EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cerr = NULL;  // Console output - stderr
-EFI_BOOT_SERVICES    *bs;   // Boot services
-EFI_RUNTIME_SERVICES *rs;   // Runtime services
-EFI_HANDLE image = NULL;    // Image handle
+EFI_SYSTEM_TABLE *st = NULL;                    // System Table 
+EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cout = NULL;   // Console output
+EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin  = NULL;   // Console input
+EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cerr = NULL;   // Console output - stderr
+EFI_BOOT_SERVICES    *bs;                       // Boot services
+EFI_RUNTIME_SERVICES *rs;                       // Runtime services
+EFI_HANDLE image = NULL;                        // Image handle
 
 EFI_EVENT timer_event;  // Global timer event
 
@@ -58,10 +61,23 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_buffer[] = {
 // Buffer to save Framebuffer data at cursor position
 EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 
+// Paging tables & variables
+#define KERNEL_ADDRESS 0xFFFFFFFF80000000
+
+typedef struct {
+    uint64_t entries[512];
+} __attribute__((packed)) Paging_Table;
+
+Paging_Table *pml4;  // Level 4 page table 
+UINTN current_descriptor = 0;
+UINTN available_pages = 0;
+UINTN next_page_address = 0;
+
 // ====================
 // Set global vars
 // ====================
 void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
+    st = systable;
     cout = systable->ConOut;
     cin = systable->ConIn;
     //cerr = systable->StdErr; // Stderr can be set to a serial output or other non-display device.
@@ -390,6 +406,16 @@ end:
     va_end(args);
 
     return result;
+}
+
+// ================================
+// Print a GUID value
+// ================================
+void print_guid(EFI_GUID guid) {
+    UINT8 *p = (UINT8 *)&guid;
+    printf(u"{%x,%x,%x,%x,%x,{%x,%x,%x,%x,%x,%x}\r\n",
+            *(UINT32 *)&p[0], *(UINT16 *)&p[4], *(UINT16 *)&p[6],
+            p[7], p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
 }
 
 // ====================
@@ -1862,7 +1888,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
 // Load an ELF64 PIE file into a new buffer, and return the 
 //   entry point for the loaded ELF program
 // ==========================================================
-VOID *load_elf(VOID *elf_buffer) {
+VOID *load_elf(VOID *elf_buffer, VOID **pgm_buffer, UINTN *pgm_size) {
     ELF_Header_64 *ehdr = elf_buffer;
 
     // Print elf header info for user
@@ -1925,6 +1951,7 @@ VOID *load_elf(VOID *elf_buffer) {
 
     // Zero init buffer, to ensure 0 padding for all program sections
     memset(program_buffer, 0, max_memory_needed);
+    *pgm_size = max_memory_needed;
 
     // Load program headers into buffer
     phdr = (ELF_Program_Header_64 *)((UINT8 *)ehdr + ehdr->e_phoff);
@@ -1948,6 +1975,7 @@ VOID *load_elf(VOID *elf_buffer) {
     // Return entry point in new buffer, with same relative offset as in the original buffer 
     VOID *entry_point = (VOID *)((UINT8 *)program_buffer + (ehdr->e_entry - mem_min));
 
+    *pgm_buffer = program_buffer;
     return entry_point;
 }
 
@@ -1955,7 +1983,7 @@ VOID *load_elf(VOID *elf_buffer) {
 // Load an PE32+ PIE file into a new buffer, and return the 
 //   entry point for the loaded PE program
 // ==========================================================
-VOID *load_pe(VOID *pe_buffer) {
+VOID *load_pe(VOID *pe_buffer, VOID **pgm_buffer, UINTN *pgm_size) {
     // Print PE Signature
     UINT8 pe_sig_offset = 0x3C; // From PE file format
     UINT32 pe_sig_pos = *(UINT32 *)((UINT8 *)pe_buffer + pe_sig_offset);
@@ -2017,6 +2045,7 @@ VOID *load_pe(VOID *pe_buffer) {
     // Initialize buffer to 0, which should also take care of needing to 0-pad sections between
     //   Raw Data and Virtual Size
     memset(program_buffer, 0, opt_hdr->SizeOfImage);
+    *pgm_size = opt_hdr->SizeOfImage;
 
     // Print section header info
     PE_Section_Header_64 *shdr = 
@@ -2053,7 +2082,7 @@ VOID *load_pe(VOID *pe_buffer) {
 
     // Return entry point
     VOID *entry_point = (UINT8 *)program_buffer + opt_hdr->AddressOfEntryPoint;
-
+    *pgm_buffer = program_buffer;
     return entry_point;
 }
 
@@ -2101,9 +2130,180 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
     return EFI_SUCCESS;
 }
 
-// ==========================================
-// Read a file from the basic data partition
-// ==========================================
+// ==================================================================
+// Return pointer to configuration table given a GUID to search for
+// ==================================================================
+VOID *get_config_table(EFI_GUID guid) { 
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        EFI_CONFIGURATION_TABLE cfg = st->ConfigurationTable[i];
+        if (!memcmp(&cfg.VendorGuid, &guid, sizeof(EFI_GUID)))  
+            return cfg.VendorTable;
+    }
+    return NULL;
+}
+
+// ==========================================================
+// "Allocate" (find) next page of physical/available memory
+// ==========================================================
+void *allocate_page(Memory_Map_Info *mmap) {
+    if (next_page_address == 0) {
+        // Get first available area for allocations
+        for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+            EFI_MEMORY_DESCRIPTOR *desc = 
+                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+            if (desc->Type == EfiConventionalMemory && available_pages == 0) {
+                current_descriptor = i;
+                next_page_address = desc->PhysicalStart;
+                available_pages = desc->NumberOfPages;
+            }
+        }
+    }
+
+    if (available_pages > 0) {
+        void *page = (void *)next_page_address;
+        available_pages--;
+        next_page_address += PAGE_SIZE;
+        return page;
+    }
+
+    // Available pages in current descriptor is 0,
+    //   Find next available page of memory in EFI memory map
+    UINTN i = current_descriptor + 1;
+    for (; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        if (desc->Type == EfiConventionalMemory) {
+            current_descriptor = i;
+            next_page_address = desc->PhysicalStart;
+            available_pages = desc->NumberOfPages;
+            break;
+        }
+    }
+
+    if (i >= mmap->size / mmap->desc_size) return NULL;
+
+    void *page = (void *)next_page_address;
+    available_pages--;
+    next_page_address += PAGE_SIZE;
+    return page;
+}
+
+// =========================================================
+// Map a 4KiB page of virtual memory to a physical address
+// =========================================================
+bool map_page(UINTN physical_address, UINTN virtual_address, Memory_Map_Info *mmap) {
+    #define PRESENT  (1 << 0)
+    #define WRITABLE (1 << 1)
+    #define USER     (1 << 2)
+    int flags = PRESENT | WRITABLE | USER;
+
+    UINTN pml4_idx = (virtual_address >> 39) & 0x1FF;   // 0-511
+    UINTN pdpt_idx = (virtual_address >> 30) & 0x1FF;   // 0-511
+    UINTN pdt_idx  = (virtual_address >> 21) & 0x1FF;   // 0-511
+    UINTN pt_idx   = (virtual_address >> 12) & 0x1FF;   // 0-511
+
+    // Allocate new pdpt if not in pml4
+    if (!(pml4->entries[pml4_idx] & PRESENT)) {
+        UINTN pdpt_address = (UINTN)allocate_page(mmap);
+
+        memset((void *)pdpt_address, 0, PAGE_SIZE);
+        pml4->entries[pml4_idx] = (pdpt_address & PAGE_PHYS_ADDR_MASK) | flags;
+
+        map_page(pdpt_address, pdpt_address, mmap);
+    }
+
+    // Allocate new pdt if not in pdpt
+    Paging_Table *pdpt = (Paging_Table *)(pml4->entries[pml4_idx] & PAGE_PHYS_ADDR_MASK);
+    if (!(pdpt->entries[pdpt_idx] & PRESENT)) {
+        UINTN pdt_address = (UINTN)allocate_page(mmap);
+
+        memset((void *)pdt_address, 0, PAGE_SIZE);
+        pdpt->entries[pdpt_idx] = (pdt_address & PAGE_PHYS_ADDR_MASK) | flags;
+
+        map_page(pdt_address, pdt_address, mmap);
+    }
+
+    // Allocate new pt if not in pdt
+    Paging_Table *pdt = (Paging_Table *)(pdpt->entries[pdpt_idx] & PAGE_PHYS_ADDR_MASK);
+    if (!(pdt->entries[pdt_idx] & PRESENT)) {
+        UINTN pt_address = (UINTN)allocate_page(mmap);
+
+        memset((void *)pt_address, 0, PAGE_SIZE);
+        pdt->entries[pdt_idx] = (pt_address & PAGE_PHYS_ADDR_MASK) | flags;
+
+        map_page(pt_address, pt_address, mmap);
+    }
+
+    // Set page in page table with input physical address
+    Paging_Table *pt = (Paging_Table *)(pdt->entries[pdt_idx] & PAGE_PHYS_ADDR_MASK);
+    if (!(pt->entries[pt_idx] & PRESENT)) 
+        pt->entries[pt_idx] = (physical_address & PAGE_PHYS_ADDR_MASK) | flags;
+
+    return true;
+}
+
+// =====================================
+// Unmap a 4KiB page of virtual memory 
+// =====================================
+bool unmap_page(UINTN virtual_address) {
+    UINTN pml4_idx = (virtual_address >> 39) & 0x1FF;   // 0-511
+    UINTN pdpt_idx = (virtual_address >> 30) & 0x1FF;   // 0-511
+    UINTN pdt_idx  = (virtual_address >> 21) & 0x1FF;   // 0-511
+    UINTN pt_idx   = (virtual_address >> 12) & 0x1FF;   // 0-511
+
+    Paging_Table *pdpt = (Paging_Table *)(pml4->entries[pml4_idx] & PAGE_PHYS_ADDR_MASK);
+    Paging_Table *pdt  = (Paging_Table *)(pdpt->entries[pdpt_idx] & PAGE_PHYS_ADDR_MASK);
+    Paging_Table *pt   = (Paging_Table *)(pdt->entries[pdt_idx]   & PAGE_PHYS_ADDR_MASK);
+
+    pt->entries[pt_idx] = 0;    // Wipe out physical address and flags
+
+    // Flush unmapped page in TLB
+    __asm__ __volatile__ ("invlpg (%0)" : : "r"(virtual_address));
+    return true;
+}
+
+// ===============================================================================
+// Identity map a 4KiB page of virtual memory; virtual address= physical address
+// ===============================================================================
+bool identity_map_page(UINTN virtual_address, Memory_Map_Info *mmap) {
+    return map_page(virtual_address, virtual_address, mmap);
+}
+
+// ===========================================
+// Initialize physical memory in Page Tables
+// ===========================================
+void init_physical_memory(Memory_Map_Info *mmap) {
+    // Allocate top level page table
+    pml4 = allocate_page(mmap);  
+    memset(pml4, 0, sizeof *pml4);
+
+    // Initialize all EFI identity mapped memory
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        for (UINTN j = 0; j < desc->NumberOfPages; j++) {
+            identity_map_page(desc->PhysicalStart + (j*PAGE_SIZE), mmap);
+
+            // Set virtual addresses in EFI memory map to physical addresses for identity mapping;
+            //   This includes runtime services & runtime code for SetVirtualAddressMap()
+            desc->VirtualStart = desc->PhysicalStart;  
+        }
+    }
+
+    // Update runtime services with virtual addresses in memory map
+    rs->SetVirtualAddressMap(mmap->size, 
+                             mmap->desc_size, 
+                             mmap->desc_version,
+                             mmap->map);
+}
+
+// ===========================================
+// Load kernel binary to buffer and call it;
+//   this will load the OS and not return!
+// ===========================================
 EFI_STATUS load_kernel(void) {
     VOID *file_buffer = NULL;
     VOID *disk_buffer = NULL;
@@ -2191,19 +2391,44 @@ EFI_STATUS load_kernel(void) {
     printf(u"Header bytes: [%x][%x][%x][%x]\r\n", 
            (UINTN)hdr[0], (UINTN)hdr[1], (UINTN)hdr[2], (UINTN)hdr[3]);
 
+    VOID *program_buffer = NULL;
+    UINTN program_size = 0;
     if (!memcmp(hdr, (UINT8[4]){0x7F, 'E', 'L', 'F'}, 4)) {
-        *(void **)&entry_point = load_elf(disk_buffer);   // Get around compiler warning about function vs void pointer
+        // Get around compiler warning about function vs void pointer
+        *(void **)&entry_point = load_elf(disk_buffer, &program_buffer, &program_size);   
 
     } else if (!memcmp(hdr, (UINT8[2]){'M', 'Z'}, 2)) {
-        *(void **)&entry_point = load_pe(disk_buffer);   // Get around compiler warning about function vs void pointer
+        // Get around compiler warning about function vs void pointer
+        *(void **)&entry_point = load_pe(disk_buffer, &program_buffer, &program_size);   
 
     } else {
         printf(u"No format found, Assuming it's a flat binary file\r\n");
-        *(void **)&entry_point = disk_buffer;   // Get around compiler warning about function vs void pointer
+        // Get around compiler warning about function vs void pointer
+        *(void **)&entry_point = disk_buffer;   
+        program_buffer = disk_buffer;
+        program_size = file_size;
     }
 
     if (!entry_point) goto cleanup; 
 
+    // Get ACPI table
+    EFI_GUID acpi_20_guid = EFI_ACPI_TABLE_GUID, acpi_guid = ACPI_TABLE_GUID;
+    kparms.ACPI_Table = get_config_table(acpi_20_guid);     // Get ACPI 2.0 table by default
+    if (kparms.ACPI_Table) printf(u"\r\nFound ACPI 2.0 Table, ");
+    else {
+        kparms.ACPI_Table = get_config_table(acpi_guid);    // Use ACPI 1.0 table as fallback
+        if (kparms.ACPI_Table) printf(u"\r\nFound ACPI 1.0 Table, ");
+        else {
+            error(u"\r\nERROR: Could not find ACPI Table.\r\n");
+            goto cleanup;
+        }
+    }
+
+    UINT8 *p = (UINT8 *)kparms.ACPI_Table;
+    printf(u"Signature: \"%c%c%c%c%c%c%c%c\"\r\n", 
+            p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7]);
+
+    // Can't print after this point, getting memory map and exiting boot services!
     printf(u"\r\nPress any key to load kernel...\r\n");
     get_key();
 
@@ -2211,16 +2436,207 @@ EFI_STATUS load_kernel(void) {
     bs->CloseEvent(timer_event);
 
     // Get Memory Map
-    if (EFI_ERROR(get_memory_map(&kparms.mmap))) 
-        goto cleanup;
+    if (EFI_ERROR(get_memory_map(&kparms.mmap))) goto cleanup;
 
     // Exit boot services before calling kernel
     if (EFI_ERROR(bs->ExitBootServices(image, kparms.mmap.key))) {
-        error(u"\r\nERROR: %x; Could not exit boot services!\r\n", status);
-        goto cleanup;
+        // Firmware could have done a partial shutdown, get memory map again
+        bs->FreePool(&kparms.mmap.map); 
+        if (EFI_ERROR(get_memory_map(&kparms.mmap))) {
+            error(u"\r\nERROR: %x; Could not exit boot services!\r\n", status);
+            goto cleanup;
+        }
     }
 
-    // Call the kernel/OS here; Fully in control now, not in EFI anymore!
+    // GDT descriptor entry
+    typedef struct {
+        union {
+            struct {
+                uint64_t limit_15_0  : 16;
+                uint64_t base_15_0   : 16;
+                uint64_t base_23_16  : 8;
+                uint64_t type        : 4;
+                uint64_t s_flag      : 1;
+                uint64_t dpl         : 2;
+                uint64_t p_flag      : 1;
+                uint64_t limit_19_16 : 4;
+                uint64_t avl         : 1;
+                uint64_t l_flag      : 1;
+                uint64_t db_flag     : 1;
+                uint64_t g_flag      : 1;
+                uint64_t base_31_24  : 8;
+            };
+            uint64_t value;
+        };
+    } __attribute__((packed)) Segment_Descriptor;
+
+    // Task state segment - 64 bit
+    typedef struct {
+        uint32_t reserved_0;
+        uint32_t rsp0_low;
+        uint32_t rsp0_high;
+        uint32_t rsp1_low;
+        uint32_t rsp1_high;
+        uint32_t rsp2_low;
+        uint32_t rsp2_high;
+        uint32_t reserved_1;
+        uint32_t reserved_2;
+        uint32_t ist1_low;
+        uint32_t ist1_high;
+        uint32_t ist2_low;
+        uint32_t ist2_high;
+        uint32_t ist3_low;
+        uint32_t ist3_high;
+        uint32_t ist4_low;
+        uint32_t ist4_high;
+        uint32_t ist5_low;
+        uint32_t ist5_high;
+        uint32_t ist6_low;
+        uint32_t ist6_high;
+        uint32_t ist7_low;
+        uint32_t ist7_high;
+        uint32_t reserved_3;
+        uint32_t reserved_4;
+        uint16_t reserved_5;
+        uint16_t io_map_base_address;
+    } __attribute__((packed)) Task_State_Segment;
+
+    // Task state (& LDT) descriptor - 64 bit
+    typedef struct {
+        union {
+            struct {
+                uint64_t limit_15_0  : 16;
+                uint64_t base_15_0   : 16;
+                uint64_t base_23_16  : 8;
+                uint64_t type        : 4;
+                uint64_t zero_1      : 1;
+                uint64_t dpl         : 2;
+                uint64_t p_flag      : 1;
+                uint64_t limit_19_16 : 4;
+                uint64_t avl         : 1;
+                uint64_t zero_2      : 1;
+                uint64_t zero_3      : 1;
+                uint64_t g_flag      : 1;
+                uint64_t base_31_24  : 8;
+            };
+            uint64_t value;
+        };
+
+        uint64_t base_63_32  : 32;
+        uint64_t reserved_1  : 8;
+        uint64_t zero_4      : 5;
+        uint64_t reserved_2  : 19;
+    } __attribute__((packed)) Tss_Descriptor;
+
+    // Example long mode GDT 
+    typedef struct {
+        Segment_Descriptor    null;         // 0x0
+        Segment_Descriptor    kernel_code;  // 0x8
+        Segment_Descriptor    kernel_data;  // 0x10
+        Segment_Descriptor    user_null;    // 0x18
+        Segment_Descriptor    user_code;    // 0x20
+        Segment_Descriptor    user_data;    // 0x28
+        Tss_Descriptor        tss;          // 0x30
+    } __attribute__((packed)) Gdt;
+
+    Gdt gdt = {0};
+    // E.g. 64 bit Kernel Code segment:
+    // uint64_t limit_15_0  : 16;  // 0xFFFF
+    // uint64_t base_15_0   : 16;  // 0x0000
+    // uint64_t base_23_16  : 8;   // 0x00
+    // uint64_t type        : 4;   // 0b1010 (Code segment = Execute/Read)
+    // uint64_t s_flag      : 1;   // 0b1  // 1 = Code or Data segment
+    // uint64_t dpl         : 2;   // 0b00 // Ring level 0
+    // uint64_t p_flag      : 1;   // 0b1  // Present flag
+    // uint64_t limit_19_16 : 4;   // 0xF
+    // uint64_t avl         : 1;   // 0b0  // Free to use
+    // uint64_t l_flag      : 1;   // 0b1  // 64-bit code segment
+    // uint64_t db_flag     : 1;   // 0b0  
+    // uint64_t g_flag      : 1;   // 0b1  // Granularity, 1 = 4KiB
+    // uint64_t base_31_24  : 8;   // 0x00
+    gdt.kernel_code.value = 0x00AF9A000000FFFF;
+    gdt.kernel_data.value = 0x00CF92000000FFFF; // db flag = 1, l flag = 0, type = 0b0010 (Data segment = Read/Write)
+
+    gdt.user_code.value = 0x00AFFA000000FFFF;   // DPL = (ring) 3
+    gdt.user_data.value = 0x00CFF2000000FFFF;   // db = 1, l = 0, dpl = 3, type = 2
+
+    Task_State_Segment tss = {0};    // Won't be used, but need valid data in GDT
+    tss.io_map_base_address = sizeof tss;
+
+    UINT64 tss_address = (UINT64)&tss;
+    gdt.tss = (Tss_Descriptor){
+        .limit_15_0  = sizeof tss - 1,
+        .base_15_0   = tss_address & 0xFFFF,
+        .base_23_16  = (tss_address >> 16) & 0xFF,
+        .type        = 9,   // 0b1001 = 64 bit TSS (available)
+        .p_flag      = 1,
+        .base_31_24  = (tss_address >> 24) & 0xFF,
+        .base_63_32  = (tss_address >> 32) & 0xFFFFFFFF,
+    };
+
+    typedef struct {
+        uint16_t limit;
+        uint64_t base;
+    } __attribute__((packed)) Descriptor_Table_Register;
+
+    Descriptor_Table_Register gdtr = {.limit = sizeof gdt - 1, .base = (UINT64)&gdt};
+
+    // TODO: Pass more parameters to kernel:
+    //    - Level 4/5 Page tables (pass these to kernel)
+    //    - Physical memory map for physical memory manager (pass to kernel)
+    //    - Virtual memory map for virtual memory manager (if not using EFI memory map for this? & pass to kernel)
+    //    - ACPI table, SMBIOS/other configuration tables (pass to kernel)
+
+    // Initialize page tables with EFI identity mapped memory
+    init_physical_memory(&kparms.mmap);
+
+    // Map kernel to higher address
+    for (UINTN i = 0; i < program_size; i += PAGE_SIZE)
+        map_page((UINTN)program_buffer + i, (UINTN)program_buffer + i + KERNEL_ADDRESS, &kparms.mmap);
+
+    // Identity map framebuffer
+    for (UINTN i = 0; i < (kparms.gop_mode.FrameBufferSize / PAGE_SIZE) + 1; i++)
+        identity_map_page(kparms.gop_mode.FrameBufferBase + (i*PAGE_SIZE), &kparms.mmap);
+
+    UINT8 *kernel_stack = allocate_page(&kparms.mmap);    // 4KiB stack
+    memset(kernel_stack, 0, 4096);
+
+    // Identity map stack
+    identity_map_page((UINTN)kernel_stack, &kparms.mmap);
+
+    // Set new page tables
+    __asm__ __volatile__ ("cli\n"               // Clear interrupt flag first
+                          "movq %%rax, %%cr3\n" // Set new page table mappings, will flush TLB
+                          : 
+                          : "a"(pml4));
+
+    // Load TSS & GDT 
+    __asm__ __volatile__ ("lgdt %0\n"               // Load new Global Descriptor Table
+
+                          "movw $0x30, %%ax\n"      // 0x30 = tss segment offset in gdt
+                          "ltr %%ax\n"              // Load task register, with tss offset
+
+                          "movq $0x08, %%rax\n"
+                          "pushq %%rax\n"           // Push kernel code segment
+                          "leaq 1f(%%rip), %%rax\n"    // Use relative offset for label
+                          "pushq %%rax\n"           // Push return address
+                          "lretq\n"                 // Far return, pop return address into IP, 
+                                                    //   and pop code segment into CS
+                          "1:\n"
+                          "movw $0x10, %%ax\n"      // 0x10 = kernel data segment
+                          "movw %%ax, %%ds\n"       // Load data segments
+                          "movw %%ax, %%es\n"
+                          "movw %%ax, %%fs\n"
+                          "movw %%ax, %%gs\n"
+                          "movw %%ax, %%ss\n" 
+
+                          "movq %1, %%rsp\n"        // Set new stack
+                          : 
+                          : "m"(gdtr), "rm"(kernel_stack + 4096)    // Stack grows down
+                          : "rax", "memory");
+
+    // Set new entry point address, offset from KERNEL_ADDRESS, and call kernel
+    *(void **)&entry_point = (void *)((UINTN)entry_point + KERNEL_ADDRESS);
     entry_point(kparms);
 
     // Should not return to this point!
@@ -2228,8 +2644,10 @@ EFI_STATUS load_kernel(void) {
 
     // Final cleanup
     cleanup:
-    bs->FreePool(file_buffer);  // Free memory allocated for ESP file
-    bs->FreePool(disk_buffer);  // Free memory allocated for data partition file
+    bs->FreePool(file_buffer);      // Free memory allocated for ESP file
+    bs->FreePool(disk_buffer);      // Free memory allocated for data partition file
+    if (kparms.mmap.map)
+        bs->FreePool(kparms.mmap.map);  // Free memory allocated for memory map
 
     exit:
     printf(u"\r\nPress any key to go back...\r\n");
@@ -2293,6 +2711,38 @@ EFI_STATUS print_memory_map(void) {
     return EFI_SUCCESS;
 }
 
+// =================================
+// Print Configuration Table GUIDs
+// =================================
+EFI_STATUS print_config_tables(void) { 
+    cout->ClearScreen(cout);
+
+    // Close Timer Event 
+    bs->CloseEvent(timer_event);
+
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        EFI_GUID guid = st->ConfigurationTable[i].VendorGuid;
+        print_guid(guid);
+
+        bool found = false;
+        for (UINTN j = 0; j < ARRAY_SIZE(STANDARD_GUIDS); j++) 
+            if (!memcmp(&STANDARD_GUIDS[j].guid, &guid, sizeof(EFI_GUID))) { 
+                printf(u"(%s)\r\n\r\n", STANDARD_GUIDS[j].string);
+                found = true;
+                break;
+            }
+
+        if (!found) printf(u"(Unknown)\r\n\r\n");
+
+        // Pause every so often
+        if (i > 0 && i % 7 == 0) get_key();
+    }
+
+    printf(u"\r\nPress any key to go back...\r\n");
+    get_key();
+    return EFI_SUCCESS;
+}
+
 // ====================
 // Entry Point
 // ====================
@@ -2319,6 +2769,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Read ESP Files",
         u"Print Block IO Partitions",
         u"Print Memory Map",
+        u"Print Config Table GUIDs",
         u"Load Kernel",
     };
 
@@ -2330,6 +2781,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         read_esp_files,
         print_block_io_partitions,
         print_memory_map,
+        print_config_tables,
         load_kernel,
     };
 

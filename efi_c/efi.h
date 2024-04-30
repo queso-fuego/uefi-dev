@@ -126,6 +126,67 @@ typedef enum {
 {0x8cf2f62c, 0xbc9b, 0x4821,\
 0x80, 0x8d, {0xec, 0x9e, 0xc4, 0x21, 0xa1, 0xa0}}
 
+// Standard Configuration Table GUIDs
+#define EFI_ACPI_TABLE_GUID \
+{0x8868e871,0xe4f1,0x11d3,\
+0xbc,0x22,{0x00,0x80,0xc7,0x3c,0x88,0x81}}
+
+#define EFI_ACPI_20_TABLE_GUID EFI_ACPI_TABLE_GUID
+
+#define ACPI_TABLE_GUID \
+{0xeb9d2d30,0x2d88,0x11d3,\
+0x9a,0x16,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
+
+#define ACPI_10_TABLE_GUID ACPI_TABLE_GUID
+
+#define SAL_SYSTEM_TABLE_GUID \
+{0xeb9d2d32,0x2d88,0x11d3,\
+0x9a,0x16,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
+
+#define SMBIOS_TABLE_GUID \
+{0xeb9d2d31,0x2d88,0x11d3,\
+0x9a,0x16,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
+
+#define SMBIOS3_TABLE_GUID \
+{0xf2fd1544, 0x9794, 0x4a2c,\
+0x99,0x2e,{0xe5,0xbb,0xcf,0x20,0xe3,0x94}}
+
+#define MPS_TABLE_GUID \
+{0xeb9d2d2f,0x2d88,0x11d3,\
+0x9a,0x16,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
+
+#define EFI_PROPERTIES_TABLE_GUID \
+{0x880aaca3, 0x4adc, 0x4a04, \
+0x90,0x79,{0xb7,0x47,0x34,0x8,0x25,0xe5}}
+
+#define EFI_SYSTEM_RESOURCES_TABLE_GUID \
+{0xb122a263, 0x3661, 0x4f68, \
+0x99,0x29,{0x78,0xf8,0xb0,0xd6,0x21,0x80}}
+
+#define EFI_SECTION_TIANO_COMPRESS_GUID \
+{0xa31280ad, 0x481e, 0x41b6, \
+0x95,0xe8,{0x12,0x7f,0x4c,0x98,0x47,0x79}}
+
+#define EFI_SECTION_LZMA_COMPRESS_GUID  \
+{0xee4e5898, 0x3914, 0x4259,\
+0x9d,0x6e,{0xdc,0x7b,0xd7,0x94,0x03,0xcf}}
+
+#define EFI_DXE_SERVICES_TABLE_GUID \
+{0x5ad34ba, 0x6f02, 0x4214, \
+0x95,0x2e,{0x4d,0xa0,0x39,0x8e,0x2b,0xb9}}
+
+#define EFI_HOB_LIST_GUID \
+{0x7739f24c, 0x93d7, 0x11d4, \
+0x9a,0x3a,{0x00,0x90,0x27,0x3f,0xc1,0x4d}}
+
+#define MEMORY_TYPE_INFORMATION_GUID \
+{0x4c19049f, 0x4137, 0x4dd3, \
+0x9c,0x10,{0x8b,0x97,0xa8,0x3f,0xfd,0xfa}}
+
+#define EFI_DEBUG_IMAGE_INFO_TABLE_GUID \
+{0x49152E77,0x1ADA,0x4764,\
+0xB7,0xA2,{0x7A,0xFE,0xFE,0xD9,0x5E,0x8B}}
+
 // Partition Type GUID values:
 // EFI System Partition GUID
 #define ESP_GUID \
@@ -730,6 +791,16 @@ EFI_STATUS
     OUT EFI_TIME_CAPABILITIES *Capabilities OPTIONAL
 );
 
+// EFI_SET_VIRTUAL_ADDRESS_MAP: UEFI Spec 2.10 section 8.4.1
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SET_VIRTUAL_ADDRESS_MAP) (
+    IN UINTN                 MemoryMapSize,
+    IN UINTN                 DescriptorSize,
+    IN UINT32                DescriptorVersion,
+    IN EFI_MEMORY_DESCRIPTOR *VirtualMap
+);
+
 // EFI_FILE_PROTOCOL: UEFI Spec 2.10 section 13.5.1
 typedef struct EFI_FILE_PROTOCOL EFI_FILE_PROTOCOL;
 
@@ -1076,8 +1147,8 @@ typedef struct {
     //
     // Virtual Memory Services
     //
-    void *SetVirtualAddressMap;
-    void *ConvertPointer;
+    EFI_SET_VIRTUAL_ADDRESS_MAP SetVirtualAddressMap;
+    void                        *ConvertPointer;
     
     //
     // Variable Services
@@ -1197,6 +1268,12 @@ typedef struct {
     void* CreateEventEx;
 } EFI_BOOT_SERVICES;
 
+// EFI_CONFIGURATION_TABLE: UEFI Spec 2.10 section 4.6.1
+typedef struct {
+    EFI_GUID VendorGuid;
+    VOID     *VendorTable;
+} EFI_CONFIGURATION_TABLE;
+
 // EFI_SYSTEM_TABLE: UEFI Spec 2.10 section 4.3.1
 typedef struct {
     EFI_TABLE_HEADER                Hdr;
@@ -1211,8 +1288,7 @@ typedef struct {
     EFI_RUNTIME_SERVICES            *RuntimeServices;
     EFI_BOOT_SERVICES               *BootServices;
     UINTN                           NumberOfTableEntries;
-    //EFI_CONFIGURATION_TABLE         *ConfigurationTable;
-    void                            *ConfigurationTable;
+    EFI_CONFIGURATION_TABLE         *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
 // EFI_IMAGE_ENTRY_POINT: UEFI Spec 2.10 section 4.1.1

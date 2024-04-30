@@ -132,6 +132,29 @@ typedef struct {
     UINT32 cols;
 } Timer_Context;
 
+// List of known configuration table or other GUID values
+typedef struct {
+    EFI_GUID guid;
+    CHAR16   *string;
+} Guid_String;
+
+Guid_String STANDARD_GUIDS[] = {
+    {EFI_ACPI_TABLE_GUID,             u"EFI_ACPI_TABLE_GUID"},
+    {ACPI_TABLE_GUID,                 u"ACPI_TABLE_GUID"},
+    {SAL_SYSTEM_TABLE_GUID,           u"SAL_SYSTEM_TABLE_GUID"},
+    {SMBIOS_TABLE_GUID,               u"SMBIOS_TABLE_GUID"},
+    {SMBIOS3_TABLE_GUID,              u"SMBIOS3_TABLE_GUID"},
+    {MPS_TABLE_GUID,                  u"MPS_TABLE_GUID"},
+    {EFI_PROPERTIES_TABLE_GUID,       u"EFI_PROPERTIES_TABLE_GUID"},
+    {EFI_SYSTEM_RESOURCES_TABLE_GUID, u"EFI_SYSTEM_RESOURCES_TABLE_GUID"},
+    {EFI_SECTION_TIANO_COMPRESS_GUID, u"EFI_SECTION_TIANO_COMPRESS_GUID"},
+    {EFI_SECTION_LZMA_COMPRESS_GUID,  u"EFI_SECTION_LZMA_COMPRESS_GUID"},
+    {EFI_DXE_SERVICES_TABLE_GUID,     u"EFI_DXE_SERVICES_TABLE_GUID"},
+    {EFI_HOB_LIST_GUID,               u"EFI_HOB_LIST_GUID"},
+    {MEMORY_TYPE_INFORMATION_GUID,    u"MEMORY_TYPE_INFORMATION_GUID"},
+    {EFI_DEBUG_IMAGE_INFO_TABLE_GUID, u"EFI_DEBUG_IMAGE_INFO_TABLE_GUID"},
+};
+
 // Memory map and associated meta data
 typedef struct {
     UINTN                 size;
@@ -143,8 +166,9 @@ typedef struct {
 
 // Example Kernel Parameters
 typedef struct {
-    Memory_Map_Info                   mmap; 
-    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE gop_mode;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE gop_mode;     // Current Graphics mode
+    VOID                              *ACPI_Table;  // Pointer to ACPI table (2.0 or 1.0)
+    Memory_Map_Info                   mmap;         // EFI Memory Map
 } Kernel_Parms;
 
 // ====================================
@@ -155,7 +179,7 @@ typedef struct {
 VOID *memset(VOID *dst, UINT8 c, UINTN len) {
     UINT8 *p = dst;
     for (UINTN i = 0; i < len; i++)
-        p[i] = c;
+        *p++ = c;
 
     return dst;
 }
@@ -170,7 +194,7 @@ VOID *memcpy(VOID *dst, VOID *src, UINTN len) {
     UINT8 *p = dst;
     UINT8 *q = src;
     for (UINTN i = 0; i < len; i++)
-        p[i] = q[i];
+        *p++ = *q++;
 
     return dst;
 }

@@ -7,8 +7,9 @@ UINTN get_color(UINTN choice);
 
 // MAIN
 __attribute__((section(".kernel"))) void EFIAPI kmain(Kernel_Parms kargs) {
+    (void)kargs;
     // Grab Framebuffer/GOP info
-    UINT32 *fb = (UINT32 *)kargs.gop_mode.FrameBufferBase;  // BGRA8888
+    UINT32 *fb = (UINT32 *)kargs.gop_mode.FrameBufferBase;  // ARGB8
     UINT32 xres = kargs.gop_mode.Info->PixelsPerScanLine;
     UINT32 yres = kargs.gop_mode.Info->VerticalResolution;
 
@@ -24,17 +25,18 @@ __attribute__((section(".kernel"))) void EFIAPI kmain(Kernel_Parms kargs) {
         for (UINT32 x = 0; x < xres / 5; x++) 
             fb[y*xres + x] = color; 
 
-    while (1); // Infinite loop, do not return back to UEFI
+    // Infinite loop, do not return back to UEFI
+    while (1) __asm__ __volatile__ ("hlt"); 
 }
 
 UINTN get_color(UINTN choice) {
     switch (choice) {
         case 1:
-            return 0xFFDDDDDD; // Light Gray AARRGGBB 8888
+            return 0xFFFFFF00; // Yellow ARGB8
             break;
 
         case 2:
-            return 0xFFCC2222; // AARRGGBB 8888
+            return 0xFFFF00FF; // Magenta ARGB8
             break;
 
         default:
