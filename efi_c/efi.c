@@ -2156,6 +2156,7 @@ void *allocate_page(Memory_Map_Info *mmap) {
                 current_descriptor = i;
                 next_page_address = desc->PhysicalStart;
                 available_pages = desc->NumberOfPages;
+                break;
             }
         }
     }
@@ -2209,9 +2210,7 @@ bool map_page(UINTN physical_address, UINTN virtual_address, Memory_Map_Info *mm
         UINTN pdpt_address = (UINTN)allocate_page(mmap);
 
         memset((void *)pdpt_address, 0, PAGE_SIZE);
-        pml4->entries[pml4_idx] = (pdpt_address & PAGE_PHYS_ADDR_MASK) | flags;
-
-        map_page(pdpt_address, pdpt_address, mmap);
+        pml4->entries[pml4_idx] = pdpt_address | flags;
     }
 
     // Allocate new pdt if not in pdpt
@@ -2220,9 +2219,7 @@ bool map_page(UINTN physical_address, UINTN virtual_address, Memory_Map_Info *mm
         UINTN pdt_address = (UINTN)allocate_page(mmap);
 
         memset((void *)pdt_address, 0, PAGE_SIZE);
-        pdpt->entries[pdpt_idx] = (pdt_address & PAGE_PHYS_ADDR_MASK) | flags;
-
-        map_page(pdt_address, pdt_address, mmap);
+        pdpt->entries[pdpt_idx] = pdt_address | flags;
     }
 
     // Allocate new pt if not in pdt
@@ -2231,9 +2228,7 @@ bool map_page(UINTN physical_address, UINTN virtual_address, Memory_Map_Info *mm
         UINTN pt_address = (UINTN)allocate_page(mmap);
 
         memset((void *)pt_address, 0, PAGE_SIZE);
-        pdt->entries[pdt_idx] = (pt_address & PAGE_PHYS_ADDR_MASK) | flags;
-
-        map_page(pt_address, pt_address, mmap);
+        pdt->entries[pdt_idx] = pt_address | flags;
     }
 
     // Set page in page table with input physical address
@@ -2284,20 +2279,9 @@ void init_physical_memory(Memory_Map_Info *mmap) {
         EFI_MEMORY_DESCRIPTOR *desc = 
             (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
 
-        for (UINTN j = 0; j < desc->NumberOfPages; j++) {
+        for (UINTN j = 0; j < desc->NumberOfPages; j++) 
             identity_map_page(desc->PhysicalStart + (j*PAGE_SIZE), mmap);
-
-            // Set virtual addresses in EFI memory map to physical addresses for identity mapping;
-            //   This includes runtime services & runtime code for SetVirtualAddressMap()
-            desc->VirtualStart = desc->PhysicalStart;  
-        }
     }
-
-    // Update runtime services with virtual addresses in memory map
-    rs->SetVirtualAddressMap(mmap->size, 
-                             mmap->desc_size, 
-                             mmap->desc_version,
-                             mmap->map);
 }
 
 // ===========================================
@@ -2604,14 +2588,11 @@ EFI_STATUS load_kernel(void) {
     // Identity map stack
     identity_map_page((UINTN)kernel_stack, &kparms.mmap);
 
-    // Set new page tables
-    __asm__ __volatile__ ("cli\n"               // Clear interrupt flag first
-                          "movq %%rax, %%cr3\n" // Set new page table mappings, will flush TLB
-                          : 
-                          : "a"(pml4));
+    // Set new page tables, TSS & GDT 
+    __asm__ __volatile__ ("cli\n"                   // Clear interrupt flag first
+                          "movq %%rax, %%cr3\n"     // Set new page table mappings, will flush TLB
 
-    // Load TSS & GDT 
-    __asm__ __volatile__ ("lgdt %0\n"               // Load new Global Descriptor Table
+                          "lgdt %1\n"               // Load new Global Descriptor Table
 
                           "movw $0x30, %%ax\n"      // 0x30 = tss segment offset in gdt
                           "ltr %%ax\n"              // Load task register, with tss offset
@@ -2624,16 +2605,16 @@ EFI_STATUS load_kernel(void) {
                                                     //   and pop code segment into CS
                           "1:\n"
                           "movw $0x10, %%ax\n"      // 0x10 = kernel data segment
-                          "movw %%ax, %%ds\n"       // Load data segments
+                          "movw %%ax, %%ds\n"       // Load data segment registers
                           "movw %%ax, %%es\n"
                           "movw %%ax, %%fs\n"
                           "movw %%ax, %%gs\n"
-                          "movw %%ax, %%ss\n" 
 
-                          "movq %1, %%rsp\n"        // Set new stack
+                          "movw %%ax, %%ss\n"       // Set new stack
+                          "movq %2, %%rsp\n"        
                           : 
-                          : "m"(gdtr), "rm"(kernel_stack + 4096)    // Stack grows down
-                          : "rax", "memory");
+                          : "a"(pml4), "m"(gdtr), "rm"(kernel_stack + 4096) // Stack grows down
+                          : "memory");
 
     // Set new entry point address, offset from KERNEL_ADDRESS, and call kernel
     *(void **)&entry_point = (void *)((UINTN)entry_point + KERNEL_ADDRESS);
