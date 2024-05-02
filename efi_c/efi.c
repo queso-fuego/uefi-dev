@@ -2281,7 +2281,15 @@ void init_physical_memory(Memory_Map_Info *mmap) {
 
         for (UINTN j = 0; j < desc->NumberOfPages; j++) 
             identity_map_page(desc->PhysicalStart + (j*PAGE_SIZE), mmap);
+
+        // Set virtual start to physical start to "identity map" each memory descriptor
+        desc->VirtualStart = desc->PhysicalStart;
     }
+
+    // Set runtime memory descriptor virtual addresses, to be able to call runtime 
+    //   services from the loaded OS. The runtime memory descriptors will now be identity
+    //   mapped from setting virtual start = physical start
+    rs->SetVirtualAddressMap(mmap->size, mmap->desc_size, mmap->desc_version, mmap->map);
 }
 
 // ===========================================
@@ -2397,18 +2405,18 @@ EFI_STATUS load_kernel(void) {
 
     // Get ACPI table
     EFI_GUID acpi_20_guid = EFI_ACPI_TABLE_GUID, acpi_guid = ACPI_TABLE_GUID;
-    kparms.ACPI_Table = get_config_table(acpi_20_guid);     // Get ACPI 2.0 table by default
-    if (kparms.ACPI_Table) printf(u"\r\nFound ACPI 2.0 Table, ");
+    VOID *ACPI_Table = get_config_table(acpi_20_guid);     // Get ACPI 2.0 table by default
+    if (ACPI_Table) printf(u"\r\nFound ACPI 2.0 Table, ");
     else {
-        kparms.ACPI_Table = get_config_table(acpi_guid);    // Use ACPI 1.0 table as fallback
-        if (kparms.ACPI_Table) printf(u"\r\nFound ACPI 1.0 Table, ");
+        ACPI_Table = get_config_table(acpi_guid);    // Use ACPI 1.0 table as fallback
+        if (ACPI_Table) printf(u"\r\nFound ACPI 1.0 Table, ");
         else {
             error(u"\r\nERROR: Could not find ACPI Table.\r\n");
             goto cleanup;
         }
     }
 
-    UINT8 *p = (UINT8 *)kparms.ACPI_Table;
+    UINT8 *p = (UINT8 *)ACPI_Table;
     printf(u"Signature: \"%c%c%c%c%c%c%c%c\"\r\n", 
             p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7]);
 
@@ -2431,6 +2439,11 @@ EFI_STATUS load_kernel(void) {
             goto cleanup;
         }
     }
+
+    // Get rest of kernel parms
+    kparms.RuntimeServices      = st->RuntimeServices;
+    kparms.NumberOfTableEntries = st->NumberOfTableEntries;
+    kparms.ConfigurationTable   = st->ConfigurationTable;
 
     // GDT descriptor entry
     typedef struct {

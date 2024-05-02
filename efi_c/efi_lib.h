@@ -166,9 +166,11 @@ typedef struct {
 
 // Example Kernel Parameters
 typedef struct {
-    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE gop_mode;     // Current Graphics mode
-    VOID                              *ACPI_Table;  // Pointer to ACPI table (2.0 or 1.0)
-    Memory_Map_Info                   mmap;         // EFI Memory Map
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE gop_mode;             // Current Graphics mode
+    Memory_Map_Info                   mmap;                 // EFI Memory Map
+    EFI_RUNTIME_SERVICES              *RuntimeServices;     // Pointer to system table runtime services
+    UINTN                             NumberOfTableEntries; // Number of configuration tables
+    EFI_CONFIGURATION_TABLE           *ConfigurationTable;  // Pointer to system table config tables
 } Kernel_Parms;
 
 // ====================================

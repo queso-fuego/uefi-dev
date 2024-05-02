@@ -25,8 +25,23 @@ __attribute__((section(".kernel"))) void EFIAPI kmain(Kernel_Parms kargs) {
         for (UINT32 x = 0; x < xres / 5; x++) 
             fb[y*xres + x] = color; 
 
+    // Wait 5 seconds then shutdown
+    EFI_TIME old_time, new_time;
+    EFI_TIME_CAPABILITIES time_cap;
+    UINTN i = 0;
+    kargs.RuntimeServices->GetTime(&old_time, &time_cap);
+    while (i < 5) {
+        kargs.RuntimeServices->GetTime(&new_time, &time_cap);
+        if (old_time.Second != new_time.Second) {
+            old_time.Second = new_time.Second;
+            i++;
+        }
+    }
+    
+    kargs.RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+
     // Infinite loop, do not return back to UEFI
-    while (1) __asm__ __volatile__ ("hlt"); 
+    //while (1) __asm__ __volatile__ ("hlt"); 
 }
 
 UINTN get_color(UINTN choice) {
