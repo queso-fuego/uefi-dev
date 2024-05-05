@@ -2567,10 +2567,12 @@ EFI_STATUS load_kernel(void) {
                           "movw %%ax, %%ss\n"       // Set new stack, will grow down
                           "movq %[stack], %%rsp\n"        
 
-                          "call *%%rbx\n"            // Call kernel entry point, for MS ABI the 
-                                                     //   1st parm kparms_ptr is in RCX from above
+                          "call *%%rbx\n"           // Call kernel entry point, for MS ABI the 1st 
+                                                    //   parm kparms_ptr is in RCX from above.
+                                                    // Also pushes current address (8 bytes) onto
+                                                    //   stack, for stack alignment.
 
-                          : "=b"(kernel_entry), "=c"(kparms_ptr) 
+                          : 
                           : [pml4]"gm"(pml4), [gdt]"gm"(gdtr), 
                             [stack]"gm"(kernel_stack + (STACK_PAGES * PAGE_SIZE)), 
                             [kernel_entry]"gm"(kernel_entry), [kparms_ptr]"gm"(kparms_ptr)

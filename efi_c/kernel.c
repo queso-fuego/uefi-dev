@@ -6,8 +6,7 @@
 UINTN get_color(UINTN choice);
 
 // MAIN
-__attribute__((section(".kernel"), aligned(0x1000))) void EFIAPI kmain(Kernel_Parms *kargs) {
-    //__asm__ __volatile__ ("cli; hlt" : : "a"(0xcafebabe));
+__attribute__((section(".kernel"))) void EFIAPI kmain(Kernel_Parms *kargs) {
     // Grab Framebuffer/GOP info
     UINT32 *fb = (UINT32 *)kargs->gop_mode.FrameBufferBase;  // ARGB8
     UINT32 xres = kargs->gop_mode.Info->PixelsPerScanLine;
@@ -45,7 +44,7 @@ __attribute__((section(".kernel"), aligned(0x1000))) void EFIAPI kmain(Kernel_Pa
     //   before ExitBootServices()/SetVirtualAddressMap()/paging/gdt setup.
     // GetTime() works above, so it doesn't seem to be a RuntimeServices() issue, 
     //   but more of an ACPI issue, which ResetSystem() uses.
-    // May end up using the FADT Reset Register for the ACPI table "FACP"
+    // May end up using the FADT Reset Register for the ACPI table "FACP"?
     while (1) __asm__ __volatile__ ("cli; hlt"); 
 }
 
