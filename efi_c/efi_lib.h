@@ -3,6 +3,8 @@
 //
 #pragma once
 
+#include "efi.h"
+
 // ELF Header - x86_64
 typedef struct {
     struct {
@@ -172,6 +174,104 @@ typedef struct {
     UINTN                             NumberOfTableEntries; // Number of configuration tables
     EFI_CONFIGURATION_TABLE           *ConfigurationTable;  // Pointer to system table config tables
 } Kernel_Parms;
+
+// GDT descriptor entry
+typedef struct {
+    union {
+        struct {
+            uint64_t limit_15_0  : 16;
+            uint64_t base_15_0   : 16;
+            uint64_t base_23_16  : 8;
+            uint64_t type        : 4;
+            uint64_t s_flag      : 1;
+            uint64_t dpl         : 2;
+            uint64_t p_flag      : 1;
+            uint64_t limit_19_16 : 4;
+            uint64_t avl         : 1;
+            uint64_t l_flag      : 1;
+            uint64_t db_flag     : 1;
+            uint64_t g_flag      : 1;
+            uint64_t base_31_24  : 8;
+        };
+        uint64_t value;
+    };
+} __attribute__((packed)) Segment_Descriptor;
+
+// Task state segment - 64 bit
+typedef struct {
+    uint32_t reserved_0;
+    uint32_t rsp0_low;
+    uint32_t rsp0_high;
+    uint32_t rsp1_low;
+    uint32_t rsp1_high;
+    uint32_t rsp2_low;
+    uint32_t rsp2_high;
+    uint32_t reserved_1;
+    uint32_t reserved_2;
+    uint32_t ist1_low;
+    uint32_t ist1_high;
+    uint32_t ist2_low;
+    uint32_t ist2_high;
+    uint32_t ist3_low;
+    uint32_t ist3_high;
+    uint32_t ist4_low;
+    uint32_t ist4_high;
+    uint32_t ist5_low;
+    uint32_t ist5_high;
+    uint32_t ist6_low;
+    uint32_t ist6_high;
+    uint32_t ist7_low;
+    uint32_t ist7_high;
+    uint32_t reserved_3;
+    uint32_t reserved_4;
+    uint16_t reserved_5;
+    uint16_t io_map_base_address;
+} __attribute__((packed)) Task_State_Segment;
+
+// Task state (& LDT) descriptor - 64 bit
+typedef struct {
+    union {
+        struct {
+            uint64_t limit_15_0  : 16;
+            uint64_t base_15_0   : 16;
+            uint64_t base_23_16  : 8;
+            uint64_t type        : 4;
+            uint64_t zero_1      : 1;
+            uint64_t dpl         : 2;
+            uint64_t p_flag      : 1;
+            uint64_t limit_19_16 : 4;
+            uint64_t avl         : 1;
+            uint64_t zero_2      : 1;
+            uint64_t zero_3      : 1;
+            uint64_t g_flag      : 1;
+            uint64_t base_31_24  : 8;
+        };
+        uint64_t value;
+    };
+
+    uint64_t base_63_32  : 32;
+    uint64_t reserved_1  : 8;
+    uint64_t zero_4      : 5;
+    uint64_t reserved_2  : 19;
+} __attribute__((packed)) Tss_Descriptor;
+
+// Example long mode GDT 
+typedef struct {
+    Segment_Descriptor    null;         // 0x0
+    Segment_Descriptor    kernel_code;  // 0x8
+    Segment_Descriptor    kernel_data;  // 0x10
+    Segment_Descriptor    user_null;    // 0x18
+    Segment_Descriptor    user_code;    // 0x20
+    Segment_Descriptor    user_data;    // 0x28
+    Tss_Descriptor        tss;          // 0x30
+} __attribute__((packed)) Gdt;
+
+typedef struct {
+    uint16_t limit;
+    uint64_t base;
+} __attribute__((packed)) Descriptor_Table_Register;
+
+typedef void EFIAPI (*Entry_Point)(Kernel_Parms);
 
 // ====================================
 // memset for compiling with clang/gcc:

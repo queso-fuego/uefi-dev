@@ -7,10 +7,10 @@ DEPENDS = $(OBJS:.o=.d)
 TARGET = BOOTX64.EFI
 
 # Flat binary PIE kernel binary
-#KERNEL = kernel.bin # ELF64 PIE kernel binary
-#KERNEL = kernel.elf
+#KERNEL = kernel.bin 
+KERNEL = kernel.elf
 # PE32+ PIE kernel binary
-KERNEL = kernel.pe
+#KERNEL = kernel.pe
 
 # Uncomment disk image exe & shell script for Windows
 #DISK_IMG_FOLDER = ..\UEFI-GPT-image-creator\
@@ -23,16 +23,16 @@ DISK_IMG_PGM = write_gpt
 QEMU_SCRIPT = qemu.sh
 
 # Uncomment CC/LDFLAGS for gcc
-CC = x86_64-w64-mingw32-gcc 
-LDFLAGS = \
+#CC = x86_64-w64-mingw32-gcc 
+#LDFLAGS = \
 	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
 # Uncomment CC/LDFLAGS for clang
-#CC = clang \
+CC = clang \
 	-target x86_64-unknown-windows 
-#LDFLAGS = \
+LDFLAGS = \
 	-target x86_64-unknown-windows \
 	-nostdlib \
 	-fuse-ld=lld-link \
@@ -62,17 +62,17 @@ $(TEST_FILE):
 	cp $@ $(DISK_IMG_FOLDER)
 
 # Flat binary - ELF/Clang
-kernel.bin: kernel.c
-	clang -c $(CFLAGS) -fPIE -o kernel.o $<
-	ld -nostdlib -Tkernel.ld --oformat binary -pie -o $@ kernel.o 
-	cp $@ $(DISK_IMG_FOLDER)
+#kernel.bin: kernel.c
+#	clang -c $(CFLAGS) -fPIE -o kernel.o $<
+#	ld -nostdlib -Tkernel.ld --oformat binary -pie -o $@ kernel.o 
+#	cp $@ $(DISK_IMG_FOLDER)
 
 # Flat binary - MINGW GCC (PE)
-#kernel.bin: kernel.c
-#	x86_64-w64-mingw32-gcc -c $(CFLAGS) -fPIE -o kernel.o $<
-#	x86_64-w64-mingw32-ld -nostdlib -Tkernel.ld --image-base=0 -pie -o kernel.obj kernel.o
-#	objcopy -O binary kernel.obj $@
-#	cp $@ $(DISK_IMG_FOLDER)
+kernel.bin: kernel.c
+	x86_64-w64-mingw32-gcc -c $(CFLAGS) -fPIE -o kernel.o $<
+	x86_64-w64-mingw32-ld -nostdlib -Tkernel.ld --image-base=0 -pie -o kernel.obj kernel.o
+	objcopy -O binary kernel.obj $@
+	cp $@ $(DISK_IMG_FOLDER)
 
 kernel.elf: kernel.c
 	clang $(CFLAGS) -fPIE -e kmain -nostdlib -o $@ $<
