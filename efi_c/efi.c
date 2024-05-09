@@ -2134,9 +2134,9 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
     return EFI_SUCCESS;
 }
 
-// ==================================================================
-// Return pointer to configuration table given a GUID to search for
-// ==================================================================
+// ========================================================
+// Return pointer to configuration table for a given GUID 
+// ========================================================
 VOID *get_config_table(EFI_GUID guid) { 
     for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
         EFI_CONFIGURATION_TABLE cfg = st->ConfigurationTable[i];
@@ -2165,29 +2165,23 @@ void *allocate_pages(Memory_Map_Info *mmap, UINTN pages) {
         }
     }
 
-    if (available_pages > 0) {
-        void *page = (void *)next_page_address;
-        available_pages -= pages;
-        next_page_address += PAGE_SIZE * pages;
-        return page;
-    }
-
     // Available pages in current descriptor is 0,
     //   Find next available page of memory in EFI memory map
-    UINTN i = current_descriptor + 1;
-    for (; i < mmap->size / mmap->desc_size; i++) {
-        EFI_MEMORY_DESCRIPTOR *desc = 
-            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+    if (available_pages == 0) {
+        UINTN i = current_descriptor + 1;
+        for (; i < mmap->size / mmap->desc_size; i++) {
+            EFI_MEMORY_DESCRIPTOR *desc = 
+                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
 
-        if (desc->Type == EfiConventionalMemory && desc->NumberOfPages >= pages) {
-            current_descriptor = i;
-            next_page_address = desc->PhysicalStart;
-            available_pages = desc->NumberOfPages;
-            break;
+            if (desc->Type == EfiConventionalMemory && desc->NumberOfPages >= pages) {
+                current_descriptor = i;
+                next_page_address = desc->PhysicalStart;
+                available_pages = desc->NumberOfPages;
+                break;
+            }
         }
+        if (i >= mmap->size / mmap->desc_size) return NULL;
     }
-
-    if (i >= mmap->size / mmap->desc_size) return NULL;
 
     void *page = (void *)next_page_address;
     available_pages -= pages;
@@ -2512,10 +2506,6 @@ EFI_STATUS load_kernel(void) {
         retries++;
     }
 
-    // TODO: Pass more parameters to kernel:
-    //    - Physical memory map for physical memory manager (pass to kernel)
-    //    - Virtual memory map for virtual memory manager (if not using EFI memory map for this? & pass to kernel)
-
     // Initialize page tables with EFI identity mapped memory, and set runtime services 
     //   virtual address map
     init_physical_memory(&kparms.mmap);
@@ -2527,7 +2517,7 @@ EFI_STATUS load_kernel(void) {
     // Identity map framebuffer
     for (UINTN i = 0; i < (kparms.gop_mode.FrameBufferSize / PAGE_SIZE) + 1; i++)
         identity_map_page(kparms.gop_mode.FrameBufferBase + (i*PAGE_SIZE), &kparms.mmap);
-
+    
     // Identity map stack
     #define STACK_PAGES 4   // 16KiB stack
     UINT8 *kernel_stack = allocate_pages(&kparms.mmap, STACK_PAGES);  
@@ -2538,45 +2528,37 @@ EFI_STATUS load_kernel(void) {
 
     Kernel_Parms *kparms_ptr = &kparms;
 
-    // Set new page tables, TSS & GDT 
-    __asm__ __volatile__ ("cli\n"                           // Clear interrupt flag before gdt/etc.
-                          "mov %[kernel_entry], %%rbx\n"    // Kernel entry point
-                          "mov %[kparms_ptr], %%rcx\n"      // MS ABI first register parameter
-
-                          "movq %[pml4], %%rax\n"    
-                          "movq %%rax, %%cr3\n"     // Set new page table mappings, will flush TLB
-
+    // Set new page tables, TSS & GDT, and call kernel 
+    __asm__ __volatile__ ("cli\n"                   // Clear interrupt flag before gdt/etc.
+                          "movq %[pml4], %%cr3\n"   // Set new page table mappings, will flush TLB
                           "lgdt %[gdt]\n"           // Load new Global Descriptor Table
+                          "ltr %[tss]\n"            // Load new task register with TSS offset
 
-                          "movw $0x30, %%ax\n"      // 0x30 = tss segment offset in gdt
-                          "ltr %%ax\n"              // Load task register, with tss offset
+                          "pushq $0x8\n"            // Push new CS (kernel code)
+                          "leaq 1f(%%rip), %%rax\n" // Use relative offset for label
+                          "pushq %%rax\n"           // Push new IP
+                          "lretq\n"                 // Far return; Pop IP/CS
 
-                          "movq $0x08, %%rax\n"
-                          "pushq %%rax\n"           // Push kernel code segment
-                          "leaq 1f(%%rip), %%rax\n"    // Use relative offset for label
-                          "pushq %%rax\n"           // Push return address
-                          "lretq\n"                 // Far return, pop return address into IP, 
-                                                    //   and pop code segment into CS
                           "1:\n"
                           "movw $0x10, %%ax\n"      // 0x10 = kernel data segment
                           "movw %%ax, %%ds\n"       // Load data segment registers
                           "movw %%ax, %%es\n"
                           "movw %%ax, %%fs\n"
                           "movw %%ax, %%gs\n"
+                          "movw %%ax, %%ss\n"       
 
-                          "movw %%ax, %%ss\n"       // Set new stack, will grow down
-                          "movq %[stack], %%rsp\n"        
+                          "movq %[stack], %%rsp\n"  // Set new stack
 
-                          "call *%%rbx\n"           // Call kernel entry point, for MS ABI the 1st 
-                                                    //   parm kparms_ptr is in RCX from above.
+                          "callq *%[kernel_entry]\n" // Call kernel entry point, for MS ABI the 1st 
+                                                    //   parm kparms_ptr is in RCX from input 
+                                                    //   constraints below.
                                                     // Also pushes current address (8 bytes) onto
                                                     //   stack, for stack alignment.
-
                           : 
-                          : [pml4]"gm"(pml4), [gdt]"gm"(gdtr), 
-                            [stack]"gm"(kernel_stack + (STACK_PAGES * PAGE_SIZE)), 
-                            [kernel_entry]"gm"(kernel_entry), [kparms_ptr]"gm"(kparms_ptr)
-                          : "memory");
+                          : [pml4]"r"(pml4), [gdt]"gm"(gdtr), [tss]"r"((UINT16)0x30),
+                            [stack]"gm"(kernel_stack + (STACK_PAGES * PAGE_SIZE)),  
+                            [kernel_entry]"r"(kernel_entry), "c"(kparms_ptr) 
+                          : "rax", "memory");
 
     // Should not reach this point!
     __builtin_unreachable();
@@ -2823,7 +2805,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                     // Escape key: power off
                     rs->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
 
-                    // !NOTE!: This should not return, system should power off
+                    // This should not return, system should power off
+                    __builtin_unreachable();
                     break;
 
                 default:
