@@ -588,7 +588,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
 //    free allocated memory.
 // =================================================================
 VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID) {
-    VOID *buffer = NULL;
+    EFI_PHYSICAL_ADDRESS buffer = 0;
     EFI_STATUS status = EFI_SUCCESS;
 
     // Loop through and get Block IO protocol for input media ID, for entire disk
@@ -601,7 +601,7 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
     status = bs->LocateHandleBuffer(ByProtocol, &bio_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) {
         error(u"\r\nERROR: %x; Could not locate any Block IO Protocols.\r\n", status);
-        return buffer;
+        return NULL;
     }
 
     BOOLEAN found = false;
@@ -639,7 +639,7 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
     if (!found) {
         error(u"\r\nERROR: Could not find Block IO protocol for disk with ID %u.\r\n", 
               disk_mediaID);
-        return buffer;
+        return NULL;
     }
 
     // Get Disk IO Protocol on same handle as Block IO protocol
@@ -657,7 +657,10 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
     }
 
     // Allocate buffer for data
-    status = bs->AllocatePool(EfiLoaderData, data_size, &buffer);
+    status = bs->AllocatePages(AllocateAnyPages, 
+                               EfiLoaderData, 
+                               data_size + (PAGE_SIZE-1) / PAGE_SIZE, 
+                               &buffer);
     if (EFI_ERROR(status)) {
         error(u"\r\nERROR: %x; Could not Allocate buffer for disk data.\r\n", status);
         bs->CloseProtocol(handle_buffer[i],
@@ -668,7 +671,7 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
     }
 
     // Use Disk IO Read to read into allocated buffer
-    status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, buffer);
+    status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, (VOID *)buffer);
     if (EFI_ERROR(status)) {
         error(u"\r\nERROR: %x; Could not read Disk LBAs into buffer.\r\n", status);
     }
@@ -686,7 +689,7 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
                       image,
                       NULL);
 
-    return buffer;
+    return (VOID *)buffer;
 }
 
 // ====================
@@ -2375,7 +2378,7 @@ EFI_STATUS load_kernel(void) {
     disk_buffer = read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID);
     if (!disk_buffer) {
         error(u"Could not find or read data partition file to buffer\r\n");
-        bs->FreePool(file_buffer);  // Free memory allocated for ESP file
+        bs->FreePool(file_buffer);  
         goto exit;
     }
 
@@ -2426,7 +2429,11 @@ EFI_STATUS load_kernel(void) {
         goto cleanup; 
     }
 
-    kernel_entry = (Entry_Point)((UINTN)entry + KERNEL_ADDRESS);
+    // Using PIE, can use same offset of entry point and map kernel anywhere, here
+    //   kernel will be mapped starting at KERNEL_ADDRESS, same entry point offset will be
+    //   used starting at KERNEL_ADDRESS
+    UINTN entry_offset = (UINTN)entry - program_buffer;
+    kernel_entry = (Entry_Point)(KERNEL_ADDRESS + entry_offset);    
 
     // Get ACPI table
     EFI_GUID acpi_20_guid = EFI_ACPI_TABLE_GUID, acpi_guid = ACPI_TABLE_GUID;
@@ -2510,9 +2517,9 @@ EFI_STATUS load_kernel(void) {
     //   virtual address map
     init_physical_memory(&kparms.mmap);
 
-    // Map kernel to higher address
+    // Map kernel to higher addresses starting at KERNEL_ADDRESS
     for (UINTN i = 0; i < program_size; i += PAGE_SIZE)
-        map_page(program_buffer + i, program_buffer + i + KERNEL_ADDRESS, &kparms.mmap);
+        map_page(program_buffer + i, KERNEL_ADDRESS + i, &kparms.mmap);
 
     // Identity map framebuffer
     for (UINTN i = 0; i < (kparms.gop_mode.FrameBufferSize / PAGE_SIZE) + 1; i++)
