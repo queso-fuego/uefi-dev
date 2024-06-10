@@ -39,6 +39,7 @@ EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin  = NULL;  // Console input
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cerr = NULL;  // Console output - stderr
 EFI_BOOT_SERVICES    *bs;   // Boot services
 EFI_RUNTIME_SERVICES *rs;   // Runtime services
+EFI_SYSTEM_TABLE     *st;   // System Table
 EFI_HANDLE image = NULL;    // Image handle
 
 EFI_EVENT timer_event;  // Global timer event
@@ -66,8 +67,9 @@ void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     cin = systable->ConIn;
     //cerr = systable->StdErr; // Stderr can be set to a serial output or other non-display device.
     cerr = cout;  // Use stdout for error printing 
-    bs = systable->BootServices;
-    rs = systable->RuntimeServices;
+    st = systable;
+    bs = st->BootServices;
+    rs = st->RuntimeServices;
     image = handle;
 }
 
@@ -306,7 +308,7 @@ bool printf(CHAR16 *fmt, ...) {
     bool result = true;
     CHAR16 charstr[2];    // TODO: Replace initializing this with memset and use = { } initializer
     va_list args;
-
+    
     va_start(args, fmt);
 
     // Initialize buffers
@@ -2220,6 +2222,11 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;
     }
 
+    // Set rest of kernel parameters
+    kparms.RuntimeServices = rs;
+    kparms.NumberOfTableEntries = st->NumberOfTableEntries;
+    kparms.ConfigurationTable = st->ConfigurationTable;
+
     // Call the kernel/OS here; Fully in control now, not in EFI anymore!
     entry_point(kparms);
 
@@ -2294,6 +2301,243 @@ EFI_STATUS print_memory_map(void) {
 }
 
 // ====================
+// Print a GUID value
+// ====================
+void print_guid(EFI_GUID guid) { 
+    UINT8 *p = (UINT8 *)&guid;
+    printf(u"{%x,%x,%x,%x,%x,{%x,%x,%x,%x,%x,%x}}\r\n",
+            *(UINT32 *)&p[0], *(UINT16 *)&p[4], *(UINT16 *)&p[6], 
+            (UINTN)p[8], (UINTN)p[9], (UINTN)p[10], (UINTN)p[11], (UINTN)p[12], (UINTN)p[13], 
+            (UINTN)p[14], (UINTN)p[15]);
+}
+
+// =======================================
+// Print configuration table GUID values
+// =======================================
+EFI_STATUS print_config_tables(void) { 
+    cout->ClearScreen(cout);
+
+    // Close Timer Event for cleanup
+    bs->CloseEvent(timer_event);
+
+    printf(u"Configuration Table GUIDs:\r\n");
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        EFI_GUID guid = st->ConfigurationTable[i].VendorGuid;
+        print_guid(guid);
+
+        // Print GUID name if available, else unknown
+        UINTN j = 0;
+        bool found = false;
+        for (; j < ARRAY_SIZE(config_table_guids_and_strings); j++) {
+            if (!memcmp(&guid, &config_table_guids_and_strings[j].guid, sizeof guid)) {
+                found = true;
+                break;
+            }
+        }
+        printf(u"(%s)\r\n\r\n", 
+               found ? config_table_guids_and_strings[j].string : u"Unknown GUID Value");
+
+        // Pause every so often
+        if (i > 0 && i % 6 == 0) get_key();
+    }
+
+    printf(u"\r\nPress any key to go back...\r\n");
+    get_key();
+    return EFI_SUCCESS;
+}
+
+// ===========================================
+// Get specific config table pointer by GUID
+// ===========================================
+VOID *get_config_table_by_guid(EFI_GUID guid) { 
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        EFI_GUID vendor_guid = st->ConfigurationTable[i].VendorGuid;
+
+        if (!memcmp(&vendor_guid, &guid, sizeof guid)) 
+            return st->ConfigurationTable[i].VendorTable;
+    }
+    return NULL;    // Did not find config table
+}
+
+// =========================
+// Print ACPI table header
+// =========================
+void print_acpi_table_header(ACPI_TABLE_HEADER header) { 
+    printf(u"Signature: %c%c%c%c\r\n"
+           u"Length: %u\r\n"
+           u"Revision: %x\r\n"
+           u"Checksum: %u\r\n"
+           u"OEMID: %c%c%c%c%c%c\r\n"
+           u"OEM Table ID: %c%c%c%c%c%c%c%c\r\n"
+           u"OEM Revision: %x\r\n"
+           u"Creator ID: %c%c%c%c\r\n"
+           u"Creator Revision: %x\r\n",
+           header.signature[0], header.signature[1], header.signature[2], header.signature[3], 
+           (UINTN)header.length,
+           (UINTN)header.revision,
+           (UINTN)header.checksum,
+
+           header.OEMID[0], header.OEMID[1], header.OEMID[2], header.OEMID[3], header.OEMID[4], 
+               header.OEMID[5], 
+
+           header.OEM_table_id[0], header.OEM_table_id[1], header.OEM_table_id[2], 
+               header.OEM_table_id[3], header.OEM_table_id[4], header.OEM_table_id[5], 
+               header.OEM_table_id[6], header.OEM_table_id[7], 
+
+            (UINTN)header.OEM_revision,
+            header.creator_id[0], header.creator_id[1], header.creator_id[2], header.creator_id[3], 
+            (UINTN)header.creator_revision);
+}
+
+// =======================================
+// Print configuration table GUID values
+// =======================================
+EFI_STATUS print_acpi_tables(void) { 
+    cout->ClearScreen(cout);
+
+    // Close Timer Event for cleanup
+    bs->CloseEvent(timer_event);
+
+    // Check for ACPI 2.0+ table
+    EFI_GUID acpi_guid = EFI_ACPI_TABLE_GUID;
+    VOID *rsdp_ptr = get_config_table_by_guid(acpi_guid);
+    bool acpi_20 = false;
+    if (!rsdp_ptr) {
+        // Check for ACPI 1.0 table as fallback
+        acpi_guid = (EFI_GUID)ACPI_TABLE_GUID;
+        rsdp_ptr = get_config_table_by_guid(acpi_guid);
+        if (!rsdp_ptr) {
+            error(u"Error: Could not find ACPI configuration table\r\n");
+            return 1;
+        } else {
+            printf(u"ACPI 1.0 Table found at %x\r\n", rsdp_ptr);
+        }
+    } else {
+        printf(u"ACPI 2.0 Table found at %x\r\n", rsdp_ptr);
+        acpi_20 = true;
+    }
+
+    // Print RSDP
+    UINT8 *rsdp = rsdp_ptr;
+    if (acpi_20) {
+        printf(u"RSDP:\r\n"
+               u"Signature: %c%c%c%c%c%c%c%c\r\n"
+               u"Checksum: %u\r\n"
+               u"OEMID: %c%c%c%c%c%c\r\n"
+               u"RSDT Address: %x\r\n"
+               u"Length: %u\r\n"
+               u"XSDT Address: %x\r\n"
+               u"Extended Checksum: %u\r\n",
+               rsdp[0], rsdp[1], rsdp[2], rsdp[3], rsdp[4], rsdp[5], rsdp[6], rsdp[7],
+               (UINTN)rsdp[8],
+               rsdp[9], rsdp[10], rsdp[11], rsdp[12], rsdp[13], rsdp[14], 
+               *(UINT32 *)&rsdp[16],
+               *(UINT32 *)&rsdp[20],
+               *(UINT64 *)&rsdp[24],
+               (UINTN)rsdp[32]);
+    } else {
+        printf(u"RSDP:\r\n"
+               u"Signature: %c%c%c%c%c%c%c%c\r\n"
+               u"Checksum: %u\r\n"
+               u"OEMID: %c%c%c%c%c%c\r\n"
+               u"RSDT Address: %x\r\n",
+               rsdp[0], rsdp[1], rsdp[2], rsdp[3], rsdp[4], rsdp[5], rsdp[6], rsdp[7],
+               (UINTN)rsdp[8],
+               rsdp[9], rsdp[10], rsdp[11], rsdp[12], rsdp[13], rsdp[14], 
+               *(UINT32 *)&rsdp[16]);
+    }
+
+    printf(u"\r\nPress any key to print RSDT/XSDT...\r\n");
+    get_key();
+
+    // Uncomment this line to use RSDT instead of XSDT
+    //acpi_20 = false;
+    
+    ACPI_TABLE_HEADER *header = NULL;
+    if (acpi_20) {
+        // Print XSDT header
+        UINT64 xsdt_address = *(UINT64 *)&rsdp[24];
+        header = (ACPI_TABLE_HEADER *)xsdt_address;
+        print_acpi_table_header(*header);
+
+        // Print XSDT entry signatures
+        printf(u"\r\nPress any key to print entries...\r\n");
+        get_key();
+
+        cout->ClearScreen(cout);
+        printf(u"Entries:\r\n");
+        UINT64 *entry = (UINT64 *)((UINT8 *)header + sizeof *header); 
+        for (UINTN i = 0; i < (header->length - sizeof *header) / 8; i++) {
+            ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)entry[i];
+            printf(u"%c%c%c%c\r\n",
+                   table_header.signature[0], table_header.signature[1], table_header.signature[2], 
+                       table_header.signature[3]);
+        }
+
+        printf(u"\r\nPress any key to print next table...\r\n");
+        get_key();
+
+        // Loop and print each ACPI table
+        for (UINTN i = 0; i < (header->length - sizeof *header) / 8; i++) {
+            cout->ClearScreen(cout);
+
+            // Print header
+            ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)entry[i];
+            print_acpi_table_header(table_header);
+
+            // TODO: Print specific table info ?
+
+            printf(u"\r\nPress any key to print next table...\r\n");
+            get_key();
+        }
+
+    } else {
+        // Print RSDT header
+        UINT32 rsdt_address = *(UINT32 *)&rsdp[16];
+
+        // The extra (UINTN) casts are to avoid compiler warnings about casting smaller 
+        //   int types to pointer
+        header = (ACPI_TABLE_HEADER *)(UINTN)rsdt_address;
+        print_acpi_table_header(*header);
+
+        // Print RSDT entry signatures
+        printf(u"\r\nPress any key to print entries...\r\n");
+        get_key();
+
+        cout->ClearScreen(cout);
+        printf(u"Entries:\r\n");
+        UINT32 *entry = (UINT32 *)((UINT8 *)header + sizeof *header); 
+        for (UINTN i = 0; i < (header->length - sizeof *header) / 4; i++) {
+            ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)(UINTN)entry[i];
+            printf(u"%c%c%c%c\r\n",
+                   table_header.signature[0], table_header.signature[1], table_header.signature[2], 
+                       table_header.signature[3]);
+        }
+
+        printf(u"\r\nPress any key to print next table...\r\n");
+        get_key();
+
+        // Loop and print each ACPI table
+        for (UINTN i = 0; i < (header->length - sizeof *header) / 4; i++) {
+            cout->ClearScreen(cout);
+
+            // Print header
+            ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)(UINTN)entry[i];
+            print_acpi_table_header(table_header);
+
+            // TODO: Print specific table info ?
+
+            printf(u"\r\nPress any key to print next table...\r\n");
+            get_key();
+        }
+    }
+
+    printf(u"\r\nPress any key to go back...\r\n");
+    get_key();
+    return EFI_SUCCESS;
+}
+
+// ====================
 // Entry Point
 // ====================
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -2319,6 +2563,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Read ESP Files",
         u"Print Block IO Partitions",
         u"Print Memory Map",
+        u"Print Configuration Tables",
+        u"Print ACPI Tables",
         u"Load Kernel",
     };
 
@@ -2330,6 +2576,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         read_esp_files,
         print_block_io_partitions,
         print_memory_map,
+        print_config_tables,
+        print_acpi_tables,
         load_kernel,
     };
 

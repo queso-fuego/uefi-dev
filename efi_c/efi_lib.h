@@ -3,6 +3,8 @@
 //
 #pragma once
 
+#include "efi.h"
+
 // ELF Header - x86_64
 typedef struct {
     struct {
@@ -145,7 +147,40 @@ typedef struct {
 typedef struct {
     Memory_Map_Info                   mmap; 
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE gop_mode;
+    EFI_RUNTIME_SERVICES              *RuntimeServices;
+    UINTN                             NumberOfTableEntries;
+    EFI_CONFIGURATION_TABLE           *ConfigurationTable;
 } Kernel_Parms;
+
+// EFI Configuration Table GUIDs and string names
+typedef struct {
+    EFI_GUID guid;
+    char16_t *string;
+} Efi_Guid_With_String;
+
+// Default 
+Efi_Guid_With_String config_table_guids_and_strings[] = {
+    {EFI_ACPI_TABLE_GUID,   u"EFI_ACPI_TABLE_GUID"},
+    {ACPI_TABLE_GUID,       u"ACPI_TABLE_GUID"},
+    {SAL_SYSTEM_TABLE_GUID, u"SAL_SYSTEM_TABLE_GUID"},
+    {SMBIOS_TABLE_GUID,     u"SMBIOS_TABLE_GUID"},
+    {SMBIOS3_TABLE_GUID,    u"SMBIOS3_TABLE_GUID"},
+    {MPS_TABLE_GUID,        u"MPS_TABLE_GUID"},
+};
+
+// General ACPI table header
+//   taken from ACPI Spec 6.4 section 21.2.1
+typedef struct {
+    char   signature[4];
+    UINT32 length;
+    UINT8  revision;
+    UINT8  checksum;
+    char   OEMID[6];
+    char   OEM_table_id[8];
+    UINT32 OEM_revision;
+    char   creator_id[4];
+    UINT32 creator_revision;
+} ACPI_TABLE_HEADER;
 
 // ====================================
 // memset for compiling with clang/gcc:
@@ -316,4 +351,19 @@ CHAR16 *strcat_u16(CHAR16 *dst, CHAR16 *src) {
 
     return dst; 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

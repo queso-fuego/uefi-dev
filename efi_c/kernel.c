@@ -24,7 +24,24 @@ __attribute__((section(".kernel"))) void EFIAPI kmain(Kernel_Parms kargs) {
         for (UINT32 x = 0; x < xres / 5; x++) 
             fb[y*xres + x] = color; 
 
-    while (1); // Infinite loop, do not return back to UEFI
+    // Test runtime services by waiting a few seconds and then shutting down
+    EFI_TIME old_time = {0}, new_time = {0};
+    EFI_TIME_CAPABILITIES time_cap = {0};
+    UINTN i = 0;
+    while (i < 3) {
+        kargs.RuntimeServices->GetTime(&new_time, &time_cap);
+        if (old_time.Second != new_time.Second) {
+            i++;
+            old_time.Second = new_time.Second;
+        }
+    }
+    kargs.RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+
+
+    // Should not return after shutting down
+    __builtin_unreachable();
+
+    //while (1); // Infinite loop, do not return back to UEFI
 }
 
 UINTN get_color(UINTN choice) {
