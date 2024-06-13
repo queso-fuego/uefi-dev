@@ -25,11 +25,24 @@
 #define px_BLACK {0x00,0x00,0x00,0x00}
 #define px_BLUE  {0x98,0x00,0x00,0x00}  // EFI_BLUE
 
+#define PHYS_PAGE_ADDR_MASK 0x000FFFFFFFFFF000  // 52 bit physical address limit, lowest 12 bits are for flags only
 #define PAGE_SIZE 4096  // 4KiB
 
 #ifdef __clang__
 int _fltused = 0;   // If using floating point code & lld-link, need to define this
 #endif
+
+// Page flags: bits 11-0
+enum {
+    PRESENT    = (1 << 0),
+    READWRITE  = (1 << 1),
+    USER       = (1 << 2),
+};
+
+// Page table structure: 512 64bit entries per table/level
+typedef struct {
+    UINT64 entries[512];
+} Page_Table;
 
 // -----------------
 // Global variables
@@ -58,6 +71,8 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_buffer[] = {
 
 // Buffer to save Framebuffer data at cursor position
 EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
+
+Page_Table *pml4 = NULL;   // Top level 4 page table for x86_64 long mode paging
 
 // ====================
 // Set global vars
@@ -2103,6 +2118,184 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
     return EFI_SUCCESS;
 }
 
+// ==================================================
+// Allocate pages from available UEFI Memory Map;
+//   technically not allocating more, but returning
+//   available pre-existing page addresses.
+//   Using this as a sort of bump allocator.
+// ==================================================
+void *mmap_allocate_pages(Memory_Map_Info *mmap, UINTN pages) {
+    static void *next_page_address = NULL;  // Next page/page range address to return to caller
+    static UINTN current_descriptor = 0;    // Current descriptor number
+    static UINTN remaining_pages = 0;       // Remaining pages in current descriptor
+
+    if (remaining_pages < pages) {
+        // Not enough remaining pages in current descriptor, find the next available one
+        UINTN i = current_descriptor+1;
+        for (; i < mmap->size / mmap->desc_size; i++) {
+            EFI_MEMORY_DESCRIPTOR *desc = 
+                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+            if (desc->Type == EfiConventionalMemory && desc->NumberOfPages >= pages) {
+                // Found enough memory to use at this descriptor, use it
+                current_descriptor = i;
+                remaining_pages = desc->NumberOfPages - pages;
+                next_page_address = (void *)(desc->PhysicalStart + (pages * PAGE_SIZE));
+                return (void *)desc->PhysicalStart;
+            }
+        }
+
+        if (i >= mmap->size / mmap->desc_size) {
+            // Ran out of descriptors to check in memory map
+            error(u"\r\nERROR: Could not find any memory to allocate pages for.\r\n");
+            return NULL;
+        }
+    }
+
+    // Else we have at least enough pages for this allocation, return the current spot in 
+    //   the memory map
+    remaining_pages -= pages;
+    void *page = next_page_address;
+    next_page_address = (void *)((UINT8 *)page + (pages * PAGE_SIZE));
+    return page;
+}
+
+// ==================================================================
+// Map a virtual address to a physical address for a page of memory
+// ==================================================================
+void map_page(UINTN physical_address, UINTN virtual_address, Memory_Map_Info *mmap) {
+    int flags = PRESENT | READWRITE | USER;   // 0b111
+
+    UINTN pml4_index = ((virtual_address) >> 39) & 0x1FF;   // 0-511
+    UINTN pdpt_index = ((virtual_address) >> 30) & 0x1FF;   // 0-511
+    UINTN pdt_index  = ((virtual_address) >> 21) & 0x1FF;   // 0-511
+    UINTN pt_index   = ((virtual_address) >> 12) & 0x1FF;   // 0-511
+
+    // Make sure pdpt exists, if not then allocate it
+    if (!(pml4->entries[pml4_index] & PRESENT)) {
+        void *pdpt_address = mmap_allocate_pages(mmap, 1);
+
+        memset(pdpt_address, 0, sizeof(Page_Table));
+        pml4->entries[pml4_index] = (UINTN)pdpt_address | flags;  
+    }
+
+    // Make sure pdt exists, if not then allocate it
+    Page_Table *pdpt = (Page_Table *)(pml4->entries[pml4_index] & PHYS_PAGE_ADDR_MASK);
+    if (!(pdpt->entries[pdpt_index] & PRESENT)) {
+        void *pdt_address = mmap_allocate_pages(mmap, 1);
+
+        memset(pdt_address, 0, sizeof(Page_Table));
+        pdpt->entries[pdpt_index] = (UINTN)pdt_address | flags;  
+    }
+
+    // Make sure pt exists, if not then allocate it
+    Page_Table *pdt = (Page_Table *)(pdpt->entries[pdpt_index] & PHYS_PAGE_ADDR_MASK);
+    if (!(pdt->entries[pdt_index] & PRESENT)) {
+        void *pt_address = mmap_allocate_pages(mmap, 1);
+
+        memset(pt_address, 0, sizeof(Page_Table));
+        pdt->entries[pdt_index] = (UINTN)pt_address | flags;  
+    }
+
+    // Map new page physical address if not present
+    Page_Table *pt = (Page_Table *)(pdt->entries[pdt_index] & PHYS_PAGE_ADDR_MASK);
+    if (!(pt->entries[pt_index] & PRESENT)) 
+        pt->entries[pt_index] = (physical_address & PHYS_PAGE_ADDR_MASK) | flags;
+}
+
+// ==============================
+// Unmap a page/virtual address 
+// ==============================
+void unmap_page(UINTN virtual_address) {
+    UINTN pml4_index = ((virtual_address) >> 39) & 0x1FF;   // 0-511
+    UINTN pdpt_index = ((virtual_address) >> 30) & 0x1FF;   // 0-511
+    UINTN pdt_index  = ((virtual_address) >> 21) & 0x1FF;   // 0-511
+    UINTN pt_index   = ((virtual_address) >> 12) & 0x1FF;   // 0-511
+
+    Page_Table *pdpt = (Page_Table *)(pml4->entries[pml4_index] & PHYS_PAGE_ADDR_MASK);
+    Page_Table *pdt = (Page_Table *)(pdpt->entries[pdpt_index] & PHYS_PAGE_ADDR_MASK);
+    Page_Table *pt = (Page_Table *)(pdt->entries[pdt_index] & PHYS_PAGE_ADDR_MASK);
+
+    pt->entries[pt_index] = 0;  // Clear page in page table to unmap the physical address there
+
+    // Flush the TLB cache for this page
+    __asm__ __volatile__("invlpg (%0)\n" : : "r"(virtual_address));
+}
+
+// ===========================================================
+// Identity map a page of memory, virtual = physical address
+// ===========================================================
+void identity_map_page(UINTN address, Memory_Map_Info *mmap) {
+    map_page(address, address, mmap);
+}
+
+// ======================================================================
+// Initialize new paging setup by identity mapping all available memory 
+//   from EFI memory map
+// ======================================================================
+void identity_map_efi_mmap(Memory_Map_Info *mmap) {
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        for (UINTN j = 0; j < desc->NumberOfPages; j++)
+            identity_map_page(desc->PhysicalStart + (j * PAGE_SIZE), mmap);
+    }
+}
+
+// ======================================================================
+// Identity map runtime memory descriptors only, to use with
+//   RuntimeServices->SetVirtualAddressMap()
+// ======================================================================
+void set_runtime_address_map(Memory_Map_Info *mmap) {
+    // First get amount of memory to allocate for runtime memory map
+    UINTN runtime_descriptors = 0;
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        if (desc->Attribute & EFI_MEMORY_RUNTIME)
+            runtime_descriptors++;
+    }
+
+    // Allocate memory for runtime memory map
+    UINTN runtime_mmap_pages = (runtime_descriptors * mmap->desc_size) + ((PAGE_SIZE-1) / PAGE_SIZE);
+    EFI_MEMORY_DESCRIPTOR *runtime_mmap = mmap_allocate_pages(mmap, runtime_mmap_pages);
+    if (!runtime_mmap) {
+        error(u"ERROR: Could not allocate runtime descriptors memory map\r\n");
+        return;
+    }
+
+    // Identity map all runtime descriptors in each descriptor
+    //UINTN runtime_mmap_size = runtime_mmap_pages / PAGE_SIZE;
+    UINTN runtime_mmap_size = runtime_mmap_pages * PAGE_SIZE; // NEW: multiply not divide, you dummy
+    memset(runtime_mmap, 0, runtime_mmap_size);
+
+    // Set all runtime descriptors in new runtime memory map, and identity map them
+    UINTN curr_runtime_desc = 0;
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        if (desc->Attribute & EFI_MEMORY_RUNTIME) {
+            EFI_MEMORY_DESCRIPTOR *runtime_desc = 
+                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)runtime_mmap + (curr_runtime_desc * mmap->desc_size));
+
+            //memcpy(runtime_desc, desc, sizeof *desc); 
+            memcpy(runtime_desc, desc, mmap->desc_size);    // NEW: use full descriptor size
+            runtime_desc->VirtualStart = runtime_desc->PhysicalStart;
+            curr_runtime_desc++;
+        }
+    }
+
+    // Set new virtual addresses for runtime memory via SetVirtualAddressMap()
+    EFI_STATUS status = rs->SetVirtualAddressMap(runtime_mmap_size, 
+                                                 mmap->desc_size, 
+                                                 mmap->desc_version,
+                                                 runtime_mmap);
+    if (EFI_ERROR(status)) error(u"ERROR: SetVirtualAddressMap()\r\n");
+}
+
 // ==========================================
 // Read a file from the basic data partition
 // ==========================================
@@ -2213,12 +2406,20 @@ EFI_STATUS load_kernel(void) {
     bs->CloseEvent(timer_event);
 
     // Get Memory Map
-    if (EFI_ERROR(get_memory_map(&kparms.mmap))) 
-        goto cleanup;
+    if (EFI_ERROR(get_memory_map(&kparms.mmap))) goto cleanup;
 
     // Exit boot services before calling kernel
-    if (EFI_ERROR(bs->ExitBootServices(image, kparms.mmap.key))) {
-        error(u"\r\nERROR: %x; Could not exit boot services!\r\n", status);
+    UINTN retries = 0;
+    const UINTN MAX_RETRIES = 5;
+    while (EFI_ERROR(bs->ExitBootServices(image, kparms.mmap.key)) && retries < MAX_RETRIES) {
+        // firmware could do a partial shutdown, need to get memory map again
+        //   and try exit boot services again 
+        bs->FreePool(kparms.mmap.map);
+        if (EFI_ERROR(get_memory_map(&kparms.mmap))) goto cleanup;
+        retries++;
+    }
+    if (retries == MAX_RETRIES) {
+        error(u"Error: Could not Exit Boot Services!\r\n");
         goto cleanup;
     }
 
@@ -2226,6 +2427,32 @@ EFI_STATUS load_kernel(void) {
     kparms.RuntimeServices = rs;
     kparms.NumberOfTableEntries = st->NumberOfTableEntries;
     kparms.ConfigurationTable = st->ConfigurationTable;
+
+    // Set up new level 4 page table
+    pml4 = mmap_allocate_pages(&kparms.mmap, 1);
+    memset(pml4, 0, sizeof *pml4);  // NEW: Initialize level4 page table
+
+    // Initialize new paging setup by identity mapping all available memory 
+    identity_map_efi_mmap(&kparms.mmap);
+
+    // Identity map runtime services memory & set new runtime address map
+    set_runtime_address_map(&kparms.mmap);
+
+    // TODO: Remap kernel to higher addresses
+    //   including entry point (and kparms?)
+
+    // TODO: Identity map framebuffer
+
+    // TODO: Identity map new stack for kernel
+
+    // TODO: Set up new GDT & TSS
+
+    // Clear interrupts before setting up new GDT/paging/etc.
+    __asm__ __volatile__("cli");
+
+    // TODO: Set new page tables (CR3 = PML4) and GDT (lgdt && ltr), and call entry point with parms
+
+    // TODO: Test calling PE, ELF, and flat bin kernels/entry points
 
     // Call the kernel/OS here; Fully in control now, not in EFI anymore!
     entry_point(kparms);
@@ -2472,6 +2699,8 @@ EFI_STATUS print_acpi_tables(void) {
             printf(u"%c%c%c%c\r\n",
                    table_header.signature[0], table_header.signature[1], table_header.signature[2], 
                        table_header.signature[3]);
+
+            if (i > 0 && i % 23 == 0) get_key();
         }
 
         printf(u"\r\nPress any key to print next table...\r\n");
@@ -2512,6 +2741,8 @@ EFI_STATUS print_acpi_tables(void) {
             printf(u"%c%c%c%c\r\n",
                    table_header.signature[0], table_header.signature[1], table_header.signature[2], 
                        table_header.signature[3]);
+
+            if (i > 0 && i % 23 == 0) get_key();
         }
 
         printf(u"\r\nPress any key to print next table...\r\n");

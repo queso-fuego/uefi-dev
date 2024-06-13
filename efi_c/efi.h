@@ -552,6 +552,25 @@ typedef struct {
     UINT64               Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
+// Memory Attribute Definitions
+// These types can be "ORed" together as needed.
+#define EFI_MEMORY_UC            0x0000000000000001
+#define EFI_MEMORY_WC            0x0000000000000002
+#define EFI_MEMORY_WT            0x0000000000000004
+#define EFI_MEMORY_WB            0x0000000000000008
+#define EFI_MEMORY_UCE           0x0000000000000010
+#define EFI_MEMORY_WP            0x0000000000001000
+#define EFI_MEMORY_RP            0x0000000000002000
+#define EFI_MEMORY_XP            0x0000000000004000
+#define EFI_MEMORY_NV            0x0000000000008000
+#define EFI_MEMORY_MORE_RELIABLE 0x0000000000010000
+#define EFI_MEMORY_RO            0x0000000000020000
+#define EFI_MEMORY_SP            0x0000000000040000
+#define EFI_MEMORY_CPU_CRYPTO    0x0000000000080000
+#define EFI_MEMORY_RUNTIME       0x8000000000000000
+#define EFI_MEMORY_ISA_VALID     0x4000000000000000
+#define EFI_MEMORY_ISA_MASK      0x0FFFF00000000000
+
 // EFI_GET_MEMORY_MAP: UEFI Spec 2.10 section 7.2.3
 typedef
 EFI_STATUS
@@ -765,6 +784,16 @@ EFI_STATUS
 (EFIAPI *EFI_GET_TIME) (
     OUT EFI_TIME              *Time,
     OUT EFI_TIME_CAPABILITIES *Capabilities OPTIONAL
+);
+
+// EFI_SET_VIRTUAL_ADDRESS_MAP: UEFI Spec 2.10 section 8.4.1
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SET_VIRTUAL_ADDRESS_MAP) (
+    IN UINTN                 MemoryMapSize,
+    IN UINTN                 DescriptorSize,
+    IN UINT32                DescriptorVersion,
+    IN EFI_MEMORY_DESCRIPTOR *VirtualMap
 );
 
 // EFI_FILE_PROTOCOL: UEFI Spec 2.10 section 13.5.1
@@ -1113,8 +1142,8 @@ typedef struct {
     //
     // Virtual Memory Services
     //
-    void *SetVirtualAddressMap;
-    void *ConvertPointer;
+    EFI_SET_VIRTUAL_ADDRESS_MAP SetVirtualAddressMap;
+    void                        *ConvertPointer;
     
     //
     // Variable Services
