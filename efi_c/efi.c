@@ -1134,6 +1134,9 @@ EFI_STATUS test_mouse(void) {
         error(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
         return status;
     }
+    if((*gop).Mode != NULL) {
+    	mode_index = (*(*gop).Mode).Mode;
+    }
 
     gop->QueryMode(gop, mode_index, &mode_info_size, &mode_info);
 
