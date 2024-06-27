@@ -35,8 +35,11 @@ __attribute__((section(".kernel"), aligned(0x1000))) void EFIAPI kmain(Kernel_Pa
             old_time.Second = new_time.Second;
         }
     }
-    kargs->RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
 
+    // Uncomment if qemu/hardware works fine with shutdown
+    //kargs->RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+
+    // Uncomment if qemu/hardware works does not work with shutdown;
     // Infinite loop, do not return back to UEFI,
     //   this is in case my hardware (laptop) doesn't shut off from ResetSystem
     //   Can still use power button manually to shut down fine
