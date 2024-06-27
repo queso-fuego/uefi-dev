@@ -7,9 +7,9 @@ DEPENDS = $(OBJS:.o=.d)
 TARGET = BOOTX64.EFI
 
 # Flat binary PIE kernel binary
-KERNEL = kernel.bin
+#KERNEL = kernel.bin
 # ELF64 PIE kernel binary
-#KERNEL = kernel.elf
+KERNEL = kernel.elf
 # PE32+ PIE kernel binary
 #KERNEL = kernel.pe
 

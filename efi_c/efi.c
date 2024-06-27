@@ -28,6 +28,9 @@
 #define PHYS_PAGE_ADDR_MASK 0x000FFFFFFFFFF000  // 52 bit physical address limit, lowest 12 bits are for flags only
 #define PAGE_SIZE 4096  // 4KiB
 
+// Kernel start address in higher memory (64-bit) - last 2 GiBs of virtual memory
+#define KERNEL_START_ADDRESS 0xFFFFFFFF80000000
+
 #ifdef __clang__
 int _fltused = 0;   // If using floating point code & lld-link, need to define this
 #endif
@@ -235,7 +238,7 @@ BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
 // ====================================
 bool eprintf(CHAR16 *fmt, va_list args) {
     bool result = true;
-    CHAR16 charstr[2];    // TODO: Replace initializing this with memset and use = { } initializer
+    CHAR16 charstr[2] = {0};
 
     // Initialize buffers
     charstr[0] = u'\0', charstr[1] = u'\0';
@@ -321,7 +324,7 @@ end:
 // ===================================
 bool printf(CHAR16 *fmt, ...) {
     bool result = true;
-    CHAR16 charstr[2];    // TODO: Replace initializing this with memset and use = { } initializer
+    CHAR16 charstr[2] = {0};    
     va_list args;
     
     va_start(args, fmt);
@@ -571,13 +574,14 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
 
 // Returns: non-null pointer to allocated buffer with data, 
 //  allocated with Boot Services AllocatePool(), or NULL if not 
-//  found or error.
+//  found or error. If executable input parameter is true, then allocate 
+//  EfiLoaderCode memory type, else use EfiLoaderData.
 //
 //  NOTE: Caller will have to use FreePool() on returned buffer to 
 //    free allocated memory.
 // =================================================================
-VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID) {
-    VOID *buffer = NULL;
+EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID, bool executable) {
+    EFI_PHYSICAL_ADDRESS buffer = 0;
     EFI_STATUS status = EFI_SUCCESS;
 
     // Loop through and get Block IO protocol for input media ID, for entire disk
@@ -646,7 +650,12 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
     }
 
     // Allocate buffer for data
-    status = bs->AllocatePool(EfiLoaderData, data_size, &buffer);
+    UINTN pages_needed = (data_size + (PAGE_SIZE-1)) / PAGE_SIZE;
+    if (executable) 
+        status = bs->AllocatePages(AllocateAnyPages, EfiLoaderCode, pages_needed, &buffer);
+    else 
+        status = bs->AllocatePages(AllocateAnyPages, EfiLoaderData, pages_needed, &buffer);
+
     if (EFI_ERROR(status)) {
         error(u"\r\nERROR: %x; Could not Allocate buffer for disk data.\r\n", status);
         bs->CloseProtocol(handle_buffer[i],
@@ -657,7 +666,7 @@ VOID *read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_me
     }
 
     // Use Disk IO Read to read into allocated buffer
-    status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, buffer);
+    status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, (VOID *)buffer);
     if (EFI_ERROR(status)) {
         error(u"\r\nERROR: %x; Could not read Disk LBAs into buffer.\r\n", status);
     }
@@ -1882,7 +1891,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
 // Load an ELF64 PIE file into a new buffer, and return the 
 //   entry point for the loaded ELF program
 // ==========================================================
-VOID *load_elf(VOID *elf_buffer) {
+VOID *load_elf(VOID *elf_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_size) {
     ELF_Header_64 *ehdr = elf_buffer;
 
     // Print elf header info for user
@@ -1936,15 +1945,23 @@ VOID *load_elf(VOID *elf_buffer) {
 
     // Allocate buffer for program headers
     EFI_STATUS status = 0;
-    VOID *program_buffer;
-    status = bs->AllocatePool(EfiLoaderData, max_memory_needed, &program_buffer);
+
+    // NOTE: May want to switch this for allocating a kernel to use AllocateAddress to put the buffer
+    //   starting at a specific address e.g. in higher half memory
+    EFI_PHYSICAL_ADDRESS program_buffer = 0;
+    UINTN pages_needed = (max_memory_needed + (PAGE_SIZE-1)) / PAGE_SIZE;
+    status = bs->AllocatePages(AllocateAnyPages, EfiLoaderCode, pages_needed, &program_buffer);
     if (EFI_ERROR(status)) {
         error(u"Error %x; Could not allocate memory for ELF program\r\n", status);
         return NULL;
     }
 
     // Zero init buffer, to ensure 0 padding for all program sections
-    memset(program_buffer, 0, max_memory_needed);
+    memset((VOID *)program_buffer, 0, max_memory_needed);
+
+    // Fill out input parms for caller
+    *file_buffer = program_buffer;
+    *file_size   = pages_needed * PAGE_SIZE;
 
     // Load program headers into buffer
     phdr = (ELF_Program_Header_64 *)((UINT8 *)ehdr + ehdr->e_phoff);
@@ -1975,7 +1992,7 @@ VOID *load_elf(VOID *elf_buffer) {
 // Load an PE32+ PIE file into a new buffer, and return the 
 //   entry point for the loaded PE program
 // ==========================================================
-VOID *load_pe(VOID *pe_buffer) {
+VOID *load_pe(VOID *pe_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_size) {
     // Print PE Signature
     UINT8 pe_sig_offset = 0x3C; // From PE file format
     UINT32 pe_sig_pos = *(UINT32 *)((UINT8 *)pe_buffer + pe_sig_offset);
@@ -2027,8 +2044,10 @@ VOID *load_pe(VOID *pe_buffer) {
     }
 
     // Allocate buffer to load sections into
-    VOID *program_buffer = NULL;
-    EFI_STATUS status = bs->AllocatePool(EfiLoaderData, opt_hdr->SizeOfImage, &program_buffer);
+    EFI_PHYSICAL_ADDRESS program_buffer = 0;
+    EFI_STATUS status = 0;
+    UINTN pages_needed = (opt_hdr->SizeOfImage + (PAGE_SIZE-1)) / PAGE_SIZE;
+    status = bs->AllocatePages(AllocateAnyPages, EfiLoaderCode, pages_needed, &program_buffer);
     if (EFI_ERROR(status)) {
         error(u"Error %x; Could not allocate memory for PE file.\r\n", status);
         return NULL;
@@ -2036,7 +2055,9 @@ VOID *load_pe(VOID *pe_buffer) {
 
     // Initialize buffer to 0, which should also take care of needing to 0-pad sections between
     //   Raw Data and Virtual Size
-    memset(program_buffer, 0, opt_hdr->SizeOfImage);
+    memset((VOID *)program_buffer, 0, opt_hdr->SizeOfImage);
+    *file_buffer = program_buffer;
+    *file_size   = pages_needed * PAGE_SIZE;
 
     // Print section header info
     PE_Section_Header_64 *shdr = 
@@ -2270,8 +2291,7 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
     }
 
     // Identity map all runtime descriptors in each descriptor
-    //UINTN runtime_mmap_size = runtime_mmap_pages / PAGE_SIZE;
-    UINTN runtime_mmap_size = runtime_mmap_pages * PAGE_SIZE; // NEW: multiply not divide, you dummy
+    UINTN runtime_mmap_size = runtime_mmap_pages * PAGE_SIZE; 
     memset(runtime_mmap, 0, runtime_mmap_size);
 
     // Set all runtime descriptors in new runtime memory map, and identity map them
@@ -2284,8 +2304,7 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
             EFI_MEMORY_DESCRIPTOR *runtime_desc = 
                 (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)runtime_mmap + (curr_runtime_desc * mmap->desc_size));
 
-            //memcpy(runtime_desc, desc, sizeof *desc); 
-            memcpy(runtime_desc, desc, mmap->desc_size);    // NEW: use full descriptor size
+            memcpy(runtime_desc, desc, mmap->desc_size);    
             runtime_desc->VirtualStart = runtime_desc->PhysicalStart;
             curr_runtime_desc++;
         }
@@ -2359,7 +2378,7 @@ EFI_STATUS load_kernel(void) {
     }
 
     // Read disk lbas for file into buffer
-    disk_buffer = read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID);
+    disk_buffer = (VOID *)read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID, true);
     if (!disk_buffer) {
         error(u"Could not find or read data partition file to buffer\r\n");
         bs->FreePool(file_buffer);  // Free memory allocated for ESP file
@@ -2380,7 +2399,7 @@ EFI_STATUS load_kernel(void) {
     Kernel_Parms kparms = {0};  // Defined in efi_lib.h
 
     kparms.gop_mode = *gop->Mode;
-    void EFIAPI (*entry_point)(Kernel_Parms) = NULL;
+    Entry_Point entry_point = NULL;
 
     // Load Kernel File depending on format (initial header bytes)
     UINT8 *hdr = disk_buffer;
@@ -2389,18 +2408,38 @@ EFI_STATUS load_kernel(void) {
     printf(u"Header bytes: [%x][%x][%x][%x]\r\n", 
            (UINTN)hdr[0], (UINTN)hdr[1], (UINTN)hdr[2], (UINTN)hdr[3]);
 
+    EFI_PHYSICAL_ADDRESS kernel_buffer = 0;
+    UINTN kernel_size = 0;
+
+    // Get around compiler warning about function vs void pointer
     if (!memcmp(hdr, (UINT8[4]){0x7F, 'E', 'L', 'F'}, 4)) {
-        *(void **)&entry_point = load_elf(disk_buffer);   // Get around compiler warning about function vs void pointer
+        *(void **)&entry_point = load_elf(disk_buffer, &kernel_buffer, &kernel_size);   
 
     } else if (!memcmp(hdr, (UINT8[2]){'M', 'Z'}, 2)) {
-        *(void **)&entry_point = load_pe(disk_buffer);   // Get around compiler warning about function vs void pointer
+        *(void **)&entry_point = load_pe(disk_buffer, &kernel_buffer, &kernel_size); 
 
     } else {
         printf(u"No format found, Assuming it's a flat binary file\r\n");
-        *(void **)&entry_point = disk_buffer;   // Get around compiler warning about function vs void pointer
+        // Flat binary executable code assumed to start at the beginning of the loaded buffer
+        *(void **)&entry_point = disk_buffer;   
+        kernel_buffer = (EFI_PHYSICAL_ADDRESS)disk_buffer;
+        kernel_size = file_size;
     }
 
-    if (!entry_point) goto cleanup; 
+    // Get new higher address kernel entry point to use
+    UINTN entry_offset = (UINTN)entry_point - kernel_buffer;
+    Entry_Point higher_entry_point = (Entry_Point)(KERNEL_START_ADDRESS + entry_offset);
+
+    // Print info for loaded kernel 
+    printf(u"\r\nOriginal Kernel address: %x, size: %u, entry point: %x\r\n"
+           u"Higher address entry point: %x\r\n",
+            kernel_buffer, kernel_size, (UINTN)entry_point, higher_entry_point);
+
+    if (!entry_point) {   
+        // Clean up/free pages for allocated kernel buffer
+        bs->FreePages(kernel_buffer, kernel_size / PAGE_SIZE);
+        goto cleanup;     
+    }
 
     printf(u"\r\nPress any key to load kernel...\r\n");
     get_key();
@@ -2433,7 +2472,7 @@ EFI_STATUS load_kernel(void) {
 
     // Set up new level 4 page table
     pml4 = mmap_allocate_pages(&kparms.mmap, 1);
-    memset(pml4, 0, sizeof *pml4);  // NEW: Initialize level4 page table
+    memset(pml4, 0, sizeof *pml4);  
 
     // Initialize new paging setup by identity mapping all available memory 
     identity_map_efi_mmap(&kparms.mmap);
@@ -2441,24 +2480,93 @@ EFI_STATUS load_kernel(void) {
     // Identity map runtime services memory & set new runtime address map
     set_runtime_address_map(&kparms.mmap);
 
-    // TODO: Remap kernel to higher addresses
-    //   including entry point (and kparms?)
+    // Remap kernel to higher addresses
+    for (UINTN i = 0; i < (kernel_size + (PAGE_SIZE-1)) / PAGE_SIZE; i++) 
+        map_page(kernel_buffer + (i*PAGE_SIZE), KERNEL_START_ADDRESS + (i*PAGE_SIZE), &kparms.mmap); 
 
-    // TODO: Identity map framebuffer
+    // NOTE: Remap kparms to higher address?
 
-    // TODO: Identity map new stack for kernel
+    // Identity map framebuffer
+    for (UINTN i = 0; i < (kparms.gop_mode.FrameBufferSize + (PAGE_SIZE-1)) / PAGE_SIZE; i++) 
+        identity_map_page(kparms.gop_mode.FrameBufferBase + (i*PAGE_SIZE), &kparms.mmap); 
 
-    // TODO: Set up new GDT & TSS
+    // Identity map new stack for kernel
+    const UINTN STACK_PAGES = 16;   
+    void *kernel_stack = mmap_allocate_pages(&kparms.mmap, STACK_PAGES);   // 64KiB stack
+    memset(kernel_stack, 0, STACK_PAGES*PAGE_SIZE); // Initialize stack memory
 
-    // Clear interrupts before setting up new GDT/paging/etc.
-    __asm__ __volatile__("cli");
+    for (UINTN i = 0; i < STACK_PAGES; i++) 
+        identity_map_page((UINTN)kernel_stack + (i*PAGE_SIZE), &kparms.mmap); 
 
-    // TODO: Set new page tables (CR3 = PML4) and GDT (lgdt && ltr), and call entry point with parms
+    // Set up new GDT & TSS
+    TSS tss = {.io_map_base = sizeof(TSS)}; // All bits after limit (in TSS descriptor) assumed to be '1'
+    UINTN tss_address = (UINTN)&tss;
 
-    // TODO: Test calling PE, ELF, and flat bin kernels/entry points
+    GDT gdt = {
+        .null.value           = 0x0000000000000000, // Null descriptor
 
-    // Call the kernel/OS here; Fully in control now, not in EFI anymore!
-    entry_point(kparms);
+        .kernel_code_64.value = 0x00AF9A000000FFFF,
+        .kernel_data_64.value = 0x00CF92000000FFFF,
+
+        .user_code_64.value   = 0x00AFFA000000FFFF,
+        .user_data_64.value   = 0x00CFF2000000FFFF,
+
+        .kernel_code_32.value = 0x00CF9A000000FFFF,
+        .kernel_data_32.value = 0x00CF92000000FFFF,
+
+        .user_code_32.value   = 0x00CFFA000000FFFF,
+        .user_data_32.value   = 0x00CFF2000000FFFF,
+
+        .tss = {
+            .descriptor = {
+                .limit_15_0 = sizeof tss - 1,
+                .base_15_0  = tss_address & 0xFFFF, 
+                .base_23_16 = (tss_address >> 16) & 0xFF, 
+                .type       = 9,    // 0b1001 64 bit TSS (available)
+                .p          = 1,    // Present
+                .base_31_24 = (tss_address >> 24) & 0xFF,
+            },
+            .base_63_32 = (tss_address >> 32) & 0xFFFFFFFF,
+        }
+    };
+
+    Descriptor_Register gdtr = {.limit = sizeof gdt - 1, .base = (UINT64)&gdt}; 
+
+    // Get pointer to kernel for RCX as first parameter for x86_64 MS ABI
+    Kernel_Parms *kparms_ptr = &kparms; 
+
+    // Set new page tables (CR3 = PML4) and GDT (lgdt && ltr), and call entry point with parms
+    __asm__ __volatile__(
+        "cli\n"                     // Clear interrupts before setting new GDT/TSS, etc.
+        "movq %[pml4], %%CR3\n"     // Load new page tables
+        "lgdt %[gdt]\n"             // Load new GDT from gdtr register
+        "ltr %[tss]\n"              // Load new task register with new TSS value (byte offset into GDT)
+
+        // Jump to new code segment in GDT (offset in GDT of 64 bit kernel/system code segment)
+        "pushq $0x8\n"
+        "leaq 1f(%%RIP), %%RAX\n"
+        "pushq %%RAX\n"
+        "lretq\n"
+
+        // Executing code with new Code segment now, set up remaining segment registers
+        "1:\n"
+        "movq $0x10, %%RAX\n"   // Data segment to use (64 bit kernel data segment, offset in GDT)
+        "movq %%RAX, %%DS\n"    // Data segment
+        "movq %%RAX, %%ES\n"    // Extra segment
+        "movq %%RAX, %%FS\n"    // Extra segment (2), these also have different uses in Long Mode
+        "movq %%RAX, %%GS\n"    // Extra segment (3), these also have different uses in Long Mode
+        "movq %%RAX, %%SS\n"    // Stack segment
+
+        // Set new stack value to use (for SP/stack pointer, etc.)
+        "movq %[stack], %%RSP\n"
+
+        // Call new entry point in higher memory
+        "callq *%[entry]\n" // First parameter is kparms_ptr in RCX in input constraints below, for MS ABI
+    :
+    :   [pml4]"r"(pml4), [gdt]"m"(gdtr), [tss]"r"((UINT16)0x48),
+        [stack]"gm"((UINTN)kernel_stack + (STACK_PAGES * PAGE_SIZE)),    // Top of newly allocated stack
+        [entry]"r"(higher_entry_point), "c"(kparms_ptr)
+    : "rax", "memory");
 
     // Should not return to this point!
     __builtin_unreachable();

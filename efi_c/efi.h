@@ -65,27 +65,6 @@ typedef UINT64 EFI_PHYSICAL_ADDRESS;
 typedef UINT64 EFI_VIRTUAL_ADDRESS;
 
 
-// EFI_MEMORY_TYPE: UEFI Spec 2.10 section 7.2.1
-typedef enum {
-    EfiReservedMemoryType,
-    EfiLoaderCode,
-    EfiLoaderData,
-    EfiBootServicesCode,
-    EfiBootServicesData,
-    EfiRuntimeServicesCode,
-    EfiRuntimeServicesData,
-    EfiConventionalMemory,
-    EfiUnusableMemory,
-    EfiACPIReclaimMemory,
-    EfiACPIMemoryNVS,
-    EfiMemoryMappedIO,
-    EfiMemoryMappedIOPortSpace,
-    EfiPalCode,
-    EfiPersistentMemory,
-    EfiUnacceptedMemoryType,
-    EfiMaxMemoryType
-} EFI_MEMORY_TYPE;
-
 // -----------------------------------
 // Misc. EFI GUIDs
 // -----------------------------------
@@ -570,6 +549,53 @@ typedef struct {
 #define EFI_MEMORY_RUNTIME       0x8000000000000000
 #define EFI_MEMORY_ISA_VALID     0x4000000000000000
 #define EFI_MEMORY_ISA_MASK      0x0FFFF00000000000
+
+//EFI_ALLOCATE_TYPE
+typedef enum {
+    AllocateAnyPages,
+    AllocateMaxAddress,
+    AllocateAddress,
+    MaxAllocateType
+} EFI_ALLOCATE_TYPE;
+
+// EFI_MEMORY_TYPE: UEFI Spec 2.10 section 7.2.1
+typedef enum {
+    EfiReservedMemoryType,
+    EfiLoaderCode,
+    EfiLoaderData,
+    EfiBootServicesCode,
+    EfiBootServicesData,
+    EfiRuntimeServicesCode,
+    EfiRuntimeServicesData,
+    EfiConventionalMemory,
+    EfiUnusableMemory,
+    EfiACPIReclaimMemory,
+    EfiACPIMemoryNVS,
+    EfiMemoryMappedIO,
+    EfiMemoryMappedIOPortSpace,
+    EfiPalCode,
+    EfiPersistentMemory,
+    EfiUnacceptedMemoryType,
+    EfiMaxMemoryType
+} EFI_MEMORY_TYPE;
+
+// EFI_ALLOCATE_PAGES: UEFI Spec 2.10 section 7.2.1
+typedef
+EFI_STATUS
+(EFIAPI *EFI_ALLOCATE_PAGES) (
+    IN EFI_ALLOCATE_TYPE        Type,
+    IN EFI_MEMORY_TYPE          MemoryType,
+    IN UINTN                    Pages,
+    IN OUT EFI_PHYSICAL_ADDRESS *Memory
+); 
+
+// EFI_FREE_PAGES: UEFI Spec 2.10 section 7.2.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_FREE_PAGES) (
+    IN EFI_PHYSICAL_ADDRESS Memory,
+    IN UINTN                Pages
+);
 
 // EFI_GET_MEMORY_MAP: UEFI Spec 2.10 section 7.2.3
 typedef
@@ -1183,8 +1209,8 @@ typedef struct {
     //
     // Memory Services
     //
-    void*              AllocatePages;
-    void*              FreePages;
+    EFI_ALLOCATE_PAGES AllocatePages;
+    EFI_FREE_PAGES     FreePages;
     EFI_GET_MEMORY_MAP GetMemoryMap;
     EFI_ALLOCATE_POOL  AllocatePool;
     EFI_FREE_POOL      FreePool;

@@ -152,6 +152,9 @@ typedef struct {
     EFI_CONFIGURATION_TABLE           *ConfigurationTable;
 } Kernel_Parms;
 
+// Kernel entry point typedef
+typedef void EFIAPI (*Entry_Point)(Kernel_Parms);
+
 // EFI Configuration Table GUIDs and string names
 typedef struct {
     EFI_GUID guid;
@@ -181,6 +184,91 @@ typedef struct {
     char   creator_id[4];
     UINT32 creator_revision;
 } ACPI_TABLE_HEADER;
+
+// KEY:
+// GDT = Global Descriptor Table
+// LDT = Local Descriptor Table
+// TSS = Task State Segment
+
+// Use this for GDTR with assembly "LGDT" instruction
+typedef struct {
+    UINT16 limit;
+    UINT64 base; 
+} __attribute__((packed)) Descriptor_Register;
+
+// Descriptor e.g. an array of these is used for the GDT/LDT
+typedef struct {
+    union {
+        UINT64 value;
+        struct {
+            UINT64 limit_15_0:  16;
+            UINT64 base_15_0:   16;
+            UINT64 base_23_16:  8;
+            UINT64 type:        4;
+            UINT64 s:           1;  // System descriptor (0), Code/Data segment (1)
+            UINT64 dpl:         2;  // Descriptor Privelege Level
+            UINT64 p:           1;  // Present flag
+            UINT64 limit_19_16: 4;
+            UINT64 avl:         1;  // Available for use
+            UINT64 l:           1;  // 64 bit (Long mode) code segment
+            UINT64 d_b:         1;  // Default op size/stack pointer size/upper bound flag
+            UINT64 g:           1;  // Granularity; 1 byte (0), 4KiB (1)
+            UINT64 base_31_24:  8;
+        };
+    };
+} X86_64_Descriptor;
+
+// TSS/LDT descriptor - 64 bit
+typedef struct {
+    X86_64_Descriptor descriptor;
+    UINT32 base_63_32;
+    UINT32 zero;
+} TSS_LDT_Descriptor;
+
+// TSS structure - TSS descriptor points to this structure in the GDT
+typedef struct {
+    UINT32 reserved_1;
+    UINT32 RSP0_lower;
+    UINT32 RSP0_upper;
+    UINT32 RSP1_lower;
+    UINT32 RSP1_upper;
+    UINT32 RSP2_lower;
+    UINT32 RSP2_upper;
+    UINT32 reserved_2;
+    UINT32 reserved_3;
+    UINT32 IST1_lower;
+    UINT32 IST1_upper;
+    UINT32 IST2_lower;
+    UINT32 IST2_upper;
+    UINT32 IST3_lower;
+    UINT32 IST3_upper;
+    UINT32 IST4_lower;
+    UINT32 IST4_upper;
+    UINT32 IST5_lower;
+    UINT32 IST5_upper;
+    UINT32 IST6_lower;
+    UINT32 IST6_upper;
+    UINT32 IST7_lower;
+    UINT32 IST7_upper;
+    UINT32 reserved_4;
+    UINT32 reserved_5;
+    UINT16 reserved_6;
+    UINT16 io_map_base;
+} TSS;
+
+// Example GDT
+typedef struct {
+    X86_64_Descriptor  null;                // Offset 0x00
+    X86_64_Descriptor  kernel_code_64;      // Offset 0x08
+    X86_64_Descriptor  kernel_data_64;      // Offset 0x10
+    X86_64_Descriptor  user_code_64;        // Offset 0x18
+    X86_64_Descriptor  user_data_64;        // Offset 0x20
+    X86_64_Descriptor  kernel_code_32;      // Offset 0x28
+    X86_64_Descriptor  kernel_data_32;      // Offset 0x30
+    X86_64_Descriptor  user_code_32;        // Offset 0x38
+    X86_64_Descriptor  user_data_32;        // Offset 0x40
+    TSS_LDT_Descriptor tss;                 // Offset 0x48
+} GDT;
 
 // ====================================
 // memset for compiling with clang/gcc:
