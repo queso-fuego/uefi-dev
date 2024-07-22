@@ -51,12 +51,13 @@ CFLAGS = \
 
 all: $(TARGET) $(KERNEL)
 	cd $(DISK_IMG_FOLDER); \
-	./$(DISK_IMG_PGM) -ad $(KERNEL); \
 	./$(QEMU_SCRIPT)
 
 $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $<
 	cp $(TARGET) $(DISK_IMG_FOLDER)
+	cd $(DISK_IMG_FOLDER); \
+	./$(DISK_IMG_PGM) -ad $(KERNEL); 
 
 $(TEST_FILE):
 	echo TESTING > $@
@@ -67,6 +68,8 @@ kernel.bin: kernel.c
 	clang -c $(CFLAGS) -fPIE -o kernel.o $<
 	ld -nostdlib -Tkernel.ld --oformat binary -pie -o $@ kernel.o 
 	cp $@ $(DISK_IMG_FOLDER)
+	cd $(DISK_IMG_FOLDER); \
+	./$(DISK_IMG_PGM) -ad $(KERNEL); 
 
 # Flat binary - MINGW GCC (PE)
 #kernel.bin: kernel.c
@@ -74,14 +77,20 @@ kernel.bin: kernel.c
 #	x86_64-w64-mingw32-ld -nostdlib -Tkernel.ld --image-base=0 -pie -o kernel.obj kernel.o
 #	objcopy -O binary kernel.obj $@
 #	cp $@ $(DISK_IMG_FOLDER)
+#	cd $(DISK_IMG_FOLDER); \
+#	./$(DISK_IMG_PGM) -ad $(KERNEL); 
 
 kernel.elf: kernel.c
 	clang $(CFLAGS) -fPIE -e kmain -nostdlib -o $@ $<
 	cp $@ $(DISK_IMG_FOLDER)
+	cd $(DISK_IMG_FOLDER); \
+	./$(DISK_IMG_PGM) -ad $(KERNEL); 
 
 kernel.pe: kernel.c
 	x86_64-w64-mingw32-gcc $(CFLAGS) -fPIE -e kmain -nostdlib -o $@ $<
 	cp $@ $(DISK_IMG_FOLDER)
+	cd $(DISK_IMG_FOLDER); \
+	./$(DISK_IMG_PGM) -ad $(KERNEL); 
 
 -include $(DEPENDS)
 

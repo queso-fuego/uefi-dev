@@ -108,6 +108,18 @@ typedef UINT64 EFI_VIRTUAL_ADDRESS;
 {0x8cf2f62c, 0xbc9b, 0x4821,\
 0x80, 0x8d, {0xec, 0x9e, 0xc4, 0x21, 0xa1, 0xa0}}
 
+#define EFI_GLOBAL_VARIABLE_GUID \
+{0x8BE4DF61,0x93CA,0x11d2,\
+0xAA,0x0D,{0x00,0xE0,0x98,0x03,0x2B,0x8C}}
+
+#define EFI_DEVICE_PATH_PROTOCOL_GUID \
+{0x09576e91,0x6d3f,0x11d2,\
+0x8e,0x39,{0x00,0xa0,0xc9,0x69,0x72,0x3b}}
+
+#define EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID \
+{0x8b843e20,0x8132,0x4852,\
+0x90,0xcc,{0x55,0x1a,0x4e,0x4a,0x7f,0x1c}}
+
 // -----------------------------------
 // EFI Configuration Table GUIDs
 // -----------------------------------
@@ -163,6 +175,15 @@ typedef UINT64 EFI_VIRTUAL_ADDRESS;
 #define EFI_UNSUPPORTED      ENCODE_ERROR(3)
 #define EFI_BUFFER_TOO_SMALL ENCODE_ERROR(5)
 #define EFI_DEVICE_ERROR     ENCODE_ERROR(7)
+#define EFI_NOT_FOUND        ENCODE_ERROR(14)
+
+#define MAX_EFI_ERROR 36
+const CHAR16 *EFI_ERROR_STRINGS[MAX_EFI_ERROR] = {
+    [3]  = u"EFI_UNSUPPORTED",
+    [5]  = u"EFI_BUFFER_TOO_SMALL",
+    [7]  = u"EFI_DEVICE_ERROR",
+    [14] = u"EFI_NOT_FOUND",
+};
 
 // EFI_GRAPHICS_OUTPUT_PROTOCOL
 typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
@@ -822,6 +843,100 @@ EFI_STATUS
     IN EFI_MEMORY_DESCRIPTOR *VirtualMap
 );
 
+// EFI_LOAD_OPTION: UEFI Spec 2.10 Errata A section 3.1.3
+// This is the data layout for a Boot#### variable, and maybe other ones
+typedef struct _EFI_LOAD_OPTION {
+    UINT32 Attributes;
+    UINT16 FilePathListLength;
+    // CHAR16 Description[];
+    // EFI_DEVICE_PATH_PROTOCOL FilePathList[];
+    // UINT8 OptionalData[];
+} EFI_LOAD_OPTION;
+
+// BootOptionSupport bitmasks
+#define EFI_BOOT_OPTION_SUPPORT_KEY     0x00000001
+#define EFI_BOOT_OPTION_SUPPORT_APP     0x00000002
+#define EFI_BOOT_OPTION_SUPPORT_SYSPREP 0x00000010
+#define EFI_BOOT_OPTION_SUPPORT_COUNT   0x00000300
+
+// EFI_GET_VARIABLE: UEFI Spec 2.10 Errata A section 8.2.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_GET_VARIABLE) (
+    IN CHAR16    *VariableName,
+    IN EFI_GUID  *VendorGuid,
+    OUT UINT32   *Attributes OPTIONAL,
+    IN OUT UINTN *DataSize,
+    OUT VOID     *Data OPTIONAL
+);
+
+// Variable Attributes
+#define EFI_VARIABLE_NON_VOLATILE           0x00000001
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS     0x00000002
+#define EFI_VARIABLE_RUNTIME_ACCESS         0x00000004
+#define EFI_VARIABLE_HARDWARE_ERROR_RECORD  0x00000008 
+//This attribute is identified by the mnemonic 'HR' elsewhere in the spec
+
+// Reserved                                                0x00000010
+#define EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS 0x00000020
+#define EFI_VARIABLE_APPEND_WRITE                          0x00000040
+#define EFI_VARIABLE_ENHANCED_AUTHENTICATED_ACCESS         0x00000080
+//This attribute indicates that the variable payload begins
+//with an EFI_VARIABLE_AUTHENTICATION_3 structure, and
+//potentially more structures as indicated by fields of this
+//structure. See definition in SetVariable().
+
+// EFI_GET_NEXT_VARIABLE_NAME: UEFI Spec 2.10 Errata A section 8.2.2
+typedef
+EFI_STATUS
+(EFIAPI *EFI_GET_NEXT_VARIABLE_NAME) (
+    IN OUT UINTN    *VariableNameSize,
+    IN OUT CHAR16   *VariableName,
+    IN OUT EFI_GUID *VendorGuid
+);
+
+// EFI_SET_VARIABLE: UEFI Spec 2.10 Errata A section 8.2.3
+typedef
+EFI_STATUS
+(EFIAPI *EFI_SET_VARIABLE) (
+    IN CHAR16   *VariableName,
+    IN EFI_GUID *VendorGuid,
+    IN UINT32   Attributes,
+    IN UINTN    DataSize,
+    IN VOID     *Data
+);
+
+// EFI_DEVICE_PATH_PROTOCOL: UEFI Spec 2.10 Errata A section 10.2
+typedef struct _EFI_DEVICE_PATH_PROTOCOL {
+    UINT8 Type;
+    UINT8 SubType;
+    UINT8 Length[2];
+} EFI_DEVICE_PATH_PROTOCOL;
+
+// EFI_DEVICE_PATH_TO_TEXT_NODE: UEFI Spec 2.10 Errata A section 10.6.3
+typedef
+CHAR16*
+(EFIAPI *EFI_DEVICE_PATH_TO_TEXT_NODE) (
+    IN CONST EFI_DEVICE_PATH_PROTOCOL *DeviceNode,
+    IN BOOLEAN                         DisplayOnly,
+    IN BOOLEAN                         AllowShortcuts
+);
+
+// EFI_DEVICE_PATH_TO_TEXT_PATH: UEFI Spec 2.10 Errata A section 10.6.4
+typedef
+CHAR16*
+(EFIAPI *EFI_DEVICE_PATH_TO_TEXT_PATH) (
+    IN CONST EFI_DEVICE_PATH_PROTOCOL *DevicePath,
+    IN BOOLEAN                         DisplayOnly,
+    IN BOOLEAN                         AllowShortcuts
+);
+
+// EFI_DEVICE_PATH_TO_TEXT_PROTOCOL: UEFI Spec 2.10 Errata A section 10.6.2
+typedef struct _EFI_DEVICE_PATH_TO_TEXT_PROTOCOL {
+    EFI_DEVICE_PATH_TO_TEXT_NODE ConvertDeviceNodeToText;
+    EFI_DEVICE_PATH_TO_TEXT_PATH ConvertDevicePathToText;
+} EFI_DEVICE_PATH_TO_TEXT_PROTOCOL;
+
 // EFI_FILE_PROTOCOL: UEFI Spec 2.10 section 13.5.1
 typedef struct EFI_FILE_PROTOCOL EFI_FILE_PROTOCOL;
 
@@ -1174,9 +1289,9 @@ typedef struct {
     //
     // Variable Services
     //
-    void *GetVariable;
-    void *GetNextVariableName;
-    void *SetVariable;
+    EFI_GET_VARIABLE           GetVariable;
+    EFI_GET_NEXT_VARIABLE_NAME GetNextVariableName;
+    EFI_SET_VARIABLE           SetVariable;
     
     //
     // Miscellaneous Services

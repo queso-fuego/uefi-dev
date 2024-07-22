@@ -356,6 +356,26 @@ BOOLEAN isdigit(char c) {
     return c >= '0' && c <= '9';
 }
 
+// =====================================================================
+// CHAR16 isdigit:
+// Returns: true/1 if char c >= 0 and <= 9, else 0/false
+// =====================================================================
+BOOLEAN isdigit_c16(CHAR16 c) {
+    return c >= u'0' && c <= u'9';
+}
+
+// =====================================================================
+// CHAR16 isxdigit:
+// Returns: true/1 if char c >= 0 and <= 9     or 
+//                           >= 'a' and <= 'f' or
+//                           >= 'A' and <= 'F'
+// =====================================================================
+BOOLEAN isxdigit_c16(CHAR16 c) {
+    return (c >= u'0' && c <= u'9') ||
+           (c >= u'a' && c <= u'f') ||
+           (c >= u'A' && c <= u'F');
+}
+
 // =============================================
 // (ASCII) atoi: 
 // Converts intial value of input string to 

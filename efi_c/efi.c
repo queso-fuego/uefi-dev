@@ -53,6 +53,7 @@ typedef struct {
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cout = NULL;  // Console output
 EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin  = NULL;  // Console input
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cerr = NULL;  // Console output - stderr
+EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *printf_cout = NULL;    // Printf specific cout/cerr
 EFI_BOOT_SERVICES    *bs;   // Boot services
 EFI_RUNTIME_SERVICES *rs;   // Runtime services
 EFI_SYSTEM_TABLE     *st;   // System Table
@@ -77,14 +78,17 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 
 Page_Table *pml4 = NULL;   // Top level 4 page table for x86_64 long mode paging
 
+INT32 text_rows = 0, text_cols = 0;
+
 // ====================
 // Set global vars
 // ====================
 void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
     cout = systable->ConOut;
     cin = systable->ConIn;
-    //cerr = systable->StdErr; // Stderr can be set to a serial output or other non-display device.
-    cerr = cout;  // Use stdout for error printing 
+    //cerr = systable->StdErr;  // Stderr can be set to a serial output or other non-display device.
+    cerr = cout;                // Use stdout for error printing 
+    printf_cout = cout;         // Printf specific cout or cerr
     st = systable;
     bs = st->BootServices;
     rs = st->RuntimeServices;
@@ -92,80 +96,9 @@ void init_global_variables(EFI_HANDLE handle, EFI_SYSTEM_TABLE *systable) {
 }
 
 // ================================
-// Print a number to stderr
-// ================================
-BOOLEAN eprint_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
-    const CHAR16 *digits = u"0123456789ABCDEF";
-    CHAR16 buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
-    UINTN i = 0;
-    BOOLEAN negative = FALSE;
-
-    if (base > 16) {
-        cerr->OutputString(cerr, u"Invalid base specified!\r\n");
-        return FALSE;    // Invalid base
-    }
-
-    // Only use and print negative numbers if decimal and signed True
-    if (base == 10 && is_signed && (INTN)number < 0) {
-       number = -(INTN)number;  // Get absolute value of correct signed value to get digits to print
-       negative = TRUE;
-    }
-
-    do {
-       buffer[i++] = digits[number % base];
-       number /= base;
-    } while (number > 0);
-
-    switch (base) {
-        case 2:
-            // Binary
-            buffer[i++] = u'b';
-            buffer[i++] = u'0';
-            break;
-
-        case 8:
-            // Octal
-            buffer[i++] = u'o';
-            buffer[i++] = u'0';
-            break;
-
-        case 10:
-            // Decimal
-            if (negative) buffer[i++] = u'-';
-            break;
-
-        case 16:
-            // Hexadecimal
-            buffer[i++] = u'x';
-            buffer[i++] = u'0';
-            break;
-
-        default:
-            // Maybe invalid base, but we'll go with it (no special processing)
-            break;
-    }
-
-    // NULL terminate string
-    buffer[i--] = u'\0';
-
-    // Reverse buffer before printing
-    for (UINTN j = 0; j < i; j++, i--) {
-        // Swap digits
-        UINTN temp = buffer[i];
-        buffer[i] = buffer[j];
-        buffer[j] = temp;
-    }
-
-    // Print number string
-    cerr->OutputString(cerr, buffer);
-
-    return TRUE;
-}
-
-// ================================
 // Print a number to stdout
 // ================================
-BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
+BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed, UINTN min_digits) {
     const CHAR16 *digits = u"0123456789ABCDEF";
     CHAR16 buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
     UINTN i = 0;
@@ -187,34 +120,10 @@ BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
        number /= base;
     } while (number > 0);
 
-    switch (base) {
-        case 2:
-            // Binary
-            buffer[i++] = u'b';
-            buffer[i++] = u'0';
-            break;
+    while (i < min_digits) buffer[i++] = u'0'; // Pad with 0s
 
-        case 8:
-            // Octal
-            buffer[i++] = u'o';
-            buffer[i++] = u'0';
-            break;
-
-        case 10:
-            // Decimal
-            if (negative) buffer[i++] = u'-';
-            break;
-
-        case 16:
-            // Hexadecimal
-            buffer[i++] = u'x';
-            buffer[i++] = u'0';
-            break;
-
-        default:
-            // Maybe invalid base, but we'll go with it (no special processing)
-            break;
-    }
+    // Print negative sign for decimal numbers
+    if (base == 10 && negative) buffer[i++] = u'-';
 
     // NULL terminate string
     buffer[i--] = u'\0';
@@ -228,94 +137,228 @@ BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed) {
     }
 
     // Print number string
-    cout->OutputString(cout, buffer);
+    printf_cout->OutputString(printf_cout, buffer);
 
     return TRUE;
 }
 
-// ====================================
-// Print formatted strings to stderr
-// ====================================
-bool eprintf(CHAR16 *fmt, va_list args) {
+// ===================================================================
+// Print formatted strings to stdout, using a va_list for arguments
+// ===================================================================
+bool vprintf(CHAR16 *fmt, va_list args) {
     bool result = true;
-    CHAR16 charstr[2] = {0};
-
+    CHAR16 charstr[2] = {0};    
+    
     // Initialize buffers
     charstr[0] = u'\0', charstr[1] = u'\0';
 
     // Print formatted string values
     for (UINTN i = 0; fmt[i] != u'\0'; i++) {
         if (fmt[i] == u'%') {
+            bool alternate_form = false;
+            UINTN min_field_width = 0;
+            UINTN precision = 0;
+            UINTN length_bits = 0;  
+            UINTN num_printed = 0;    // # of digits/chars printed
+            UINT8 base = 0;
+            bool signed_num = false;
+            bool numeric = false;
             i++;
 
-            // Grab next argument type from input args, and print it
+            // Check for flags
+            if (fmt[i] == u'#') {
+                // Alternate form
+                alternate_form = true;
+                i++;
+            }
+            // '0', '-', ...
+
+            // Check for minimum field width e.g. in "8.2" this would be 8
+            if (fmt[i] == u'*') {
+                // Get int argument for min field width
+                min_field_width = va_arg(args, int);
+                i++;
+            } else {
+                // Get number literal from format string
+                while (isdigit_c16(fmt[i])) 
+                    min_field_width = (min_field_width * 10) + (fmt[i++] - u'0');
+            }
+
+            // Check for precision/maximum field width e.g. in "8.2" this would be 2
+            if (fmt[i] == u'.') {
+                i++;
+                if (fmt[i] == u'*') {
+                    // Get int argument for precision
+                    precision = va_arg(args, int);
+                    i++;
+                } else {
+                    // Get number literal from format string
+                    while (isdigit_c16(fmt[i])) 
+                        precision = (precision * 10) + (fmt[i++] - u'0');
+                }
+            }
+
+            // Check for Length modifiers e.g. h/hh/l/ll
+            if (fmt[i] == u'h') {
+                i++;
+                length_bits = 16;       // h
+                if (fmt[i] == u'h') {
+                    i++;
+                    length_bits = 8;    // hh
+                }
+            } else if (fmt[i] == u'l') {
+                i++;
+                length_bits = 32;       // l
+                if (fmt[i] == u'l') {
+                    i++;
+                    length_bits = 64;    // ll
+                }
+            }
+
+            // Check for conversion specifier
             switch (fmt[i]) {
                 case u'c': {
                     // Print CHAR16 value; printf("%c", char)
-                    charstr[0] = va_arg(args, int); // Compiler warning says to do this
-                    cerr->OutputString(cerr, charstr);
+                    if (length_bits == 8)
+                        charstr[0] = (char)va_arg(args, int);   // %hhc "ascii" or other 8 bit char
+                    else
+                        charstr[0] = (CHAR16)va_arg(args, int); // Assuming 16 bit char16_t
+
+                    printf_cout->OutputString(printf_cout, charstr);
                 }
                 break;
 
                 case u's': {
                     // Print CHAR16 string; printf("%s", string)
-                    CHAR16 *string = va_arg(args, CHAR16*);
-                    cerr->OutputString(cerr, string);
+                    if (length_bits == 8) {
+                        char *string = va_arg(args, char*); // %hhs; Assuming 8 bit ascii chars
+                        while (*string) {
+                            charstr[0] = *string++;
+                            printf_cout->OutputString(printf_cout, charstr);
+                            num_printed++;
+                            if (num_printed == precision) break;    // Stop printing at max characters
+                        }
+
+                        // Pad out with blanks by default to minimum field width
+                        while (num_printed < min_field_width) {
+                            charstr[0] = u' ';
+                            printf_cout->OutputString(printf_cout, charstr);
+                            num_printed++;
+                        }
+
+                    } else {
+                        CHAR16 *string = va_arg(args, CHAR16*); // Assuming 16 bit char16_t
+                        while (*string) {
+                            charstr[0] = *string++;
+                            printf_cout->OutputString(printf_cout, charstr);
+                            num_printed++;
+                            if (num_printed == precision) break;    // Stop printing at max characters
+                        }
+
+                        // Pad out with blanks by default to minimum field width
+                        while (num_printed < min_field_width) {
+                            charstr[0] = u' ';
+                            printf_cout->OutputString(printf_cout, charstr);
+                            num_printed++;
+                        }
+                    }
                 }
                 break;
 
                 case u'd': {
                     // Print INT32; printf("%d", number_int32)
-                    INT32 number = va_arg(args, INT32);
-                    eprint_number(number, 10, TRUE);
-                }
-                break;
-
-                case u'u': {
-                    // Print UINT32; printf("%u", number_uint32)
-                    UINT32 number = va_arg(args, UINT32);
-                    eprint_number(number, 10, FALSE);
-                }
-                break;
-
-                case u'b': {
-                    // Print UINTN as binary; printf("%b", number_uintn)
-                    UINTN number = va_arg(args, UINTN);
-                    eprint_number(number, 2, FALSE);
-                }
-                break;
-
-                case u'o': {
-                    // Print UINTN as octal; printf("%o", number_uintn)
-                    UINTN number = va_arg(args, UINTN);
-                    eprint_number(number, 8, FALSE);
+                    numeric = true;
+                    base = 10;
+                    signed_num = true;
                 }
                 break;
 
                 case u'x': {
                     // Print hex UINTN; printf("%x", number_uintn)
-                    UINTN number = va_arg(args, UINTN);
-                    eprint_number(number, 16, FALSE);
+                    numeric = true;
+                    base = 16;
+                    signed_num = false;
+                    if (alternate_form)
+                        printf_cout->OutputString(printf_cout, u"0x");
+                }
+                break;
+
+                case u'u': {
+                    // Print UINT32; printf("%u", number_uint32)
+                    numeric = true;
+                    base = 10;
+                    signed_num = false;
+                }
+                break;
+
+                case u'b': {
+                    // Print UINTN as binary; printf("%b", number_uintn)
+                    numeric = true;
+                    base = 2;
+                    signed_num = false;
+                    if (alternate_form)
+                        printf_cout->OutputString(printf_cout, u"0b");
+                }
+                break;
+
+                case u'o': {
+                    // Print UINTN as octal; printf("%o", number_uintn)
+                    numeric = true;
+                    base = 8;
+                    signed_num = false;
+                    if (alternate_form)
+                        printf_cout->OutputString(printf_cout, u"0o");
                 }
                 break;
 
                 default:
-                    cerr->OutputString(cerr, u"Invalid format specifier: %");
+                    printf_cout->OutputString(printf_cout, u"Invalid format specifier: %");
                     charstr[0] = fmt[i];
-                    cerr->OutputString(cerr, charstr);
-                    cerr->OutputString(cerr, u"\r\n");
+                    printf_cout->OutputString(printf_cout, charstr);
+                    printf_cout->OutputString(printf_cout, u"\r\n");
                     result = false;
                     goto end;
                     break;
             }
+
+            if (numeric) {
+                // Printing a number
+                UINT64 number = 0;
+                switch (length_bits) {
+                    case 0:
+                    case 32:        // l
+                    default:
+                        number = va_arg(args, UINT32);
+                        break;
+
+                    case 8:
+                        // hh
+                        number = (UINT8)va_arg(args, int);
+                        break;
+
+                    case 16:
+                        // h
+                        number = (UINT16)va_arg(args, int);
+                        break;
+
+                    case 64:
+                        // ll
+                        number = va_arg(args, UINT64);
+                        break;
+                }
+                print_number(number, base, signed_num, precision);  
+            }
+
         } else {
             // Not formatted string, print next character
             charstr[0] = fmt[i];
-            cerr->OutputString(cerr, charstr);
+            printf_cout->OutputString(printf_cout, charstr);
         }
     }
 
 end:
+    va_end(args);
+
     return result;
 }
 
@@ -324,89 +367,10 @@ end:
 // ===================================
 bool printf(CHAR16 *fmt, ...) {
     bool result = true;
-    CHAR16 charstr[2] = {0};    
+
     va_list args;
-    
     va_start(args, fmt);
-
-    // Initialize buffers
-    charstr[0] = u'\0', charstr[1] = u'\0';
-
-    // Print formatted string values
-    for (UINTN i = 0; fmt[i] != u'\0'; i++) {
-        if (fmt[i] == u'%') {
-            i++;
-
-            // Grab next argument type from input args, and print it
-            switch (fmt[i]) {
-                case u'c': {
-                    // Print CHAR16 value; printf("%c", char)
-                    charstr[0] = va_arg(args, int); // Compiler warning says to do this
-                    cout->OutputString(cout, charstr);
-                }
-                break;
-
-                case u's': {
-                    // Print CHAR16 string; printf("%s", string)
-                    CHAR16 *string = va_arg(args, CHAR16*);
-                    cout->OutputString(cout, string);
-                }
-                break;
-
-                case u'd': {
-                    // Print INT32; printf("%d", number_int32)
-                    INT32 number = va_arg(args, INT32);
-                    //print_int(number);
-                    print_number(number, 10, TRUE);
-                }
-                break;
-
-                case u'x': {
-                    // Print hex UINTN; printf("%x", number_uintn)
-                    UINTN number = va_arg(args, UINTN);
-                    //print_hex(number);
-                    print_number(number, 16, FALSE);
-                }
-                break;
-
-                case u'u': {
-                    // Print UINT32; printf("%u", number_uint32)
-                    UINT32 number = va_arg(args, UINT32);
-                    print_number(number, 10, FALSE);
-                }
-                break;
-
-                case u'b': {
-                    // Print UINTN as binary; printf("%b", number_uintn)
-                    UINTN number = va_arg(args, UINTN);
-                    eprint_number(number, 2, FALSE);
-                }
-                break;
-
-                case u'o': {
-                    // Print UINTN as octal; printf("%o", number_uintn)
-                    UINTN number = va_arg(args, UINTN);
-                    eprint_number(number, 8, FALSE);
-                }
-                break;
-
-                default:
-                    cout->OutputString(cout, u"Invalid format specifier: %");
-                    charstr[0] = fmt[i];
-                    cout->OutputString(cout, charstr);
-                    cout->OutputString(cout, u"\r\n");
-                    result = false;
-                    goto end;
-                    break;
-            }
-        } else {
-            // Not formatted string, print next character
-            charstr[0] = fmt[i];
-            cout->OutputString(cout, charstr);
-        }
-    }
-
-end:
+    result = vprintf(fmt, args);
     va_end(args);
 
     return result;
@@ -435,15 +399,75 @@ EFI_INPUT_KEY get_key(void) {
 // Print error message and get a key from user,
 //  so they can acknowledge the error and it doesn't go on immediately.
 // ======================================================================
-bool error(CHAR16 *fmt, ...) {
+bool error(char *file, int line, const char *func, EFI_STATUS status, CHAR16 *fmt, ...) {
+    printf_cout = cerr;             // Printf() will print to stderr
+
+    printf(u"\r\nERROR: FILE %hhs, LINE %d, FUNCTION %hhs\r\n", file, line, func);
+
+    // Print error code & string if applicable
+    if (status > 0 && status - TOP_BIT < MAX_EFI_ERROR)
+        printf(u"STATUS: %x (%s)\r\n", status, EFI_ERROR_STRINGS[status-TOP_BIT]);
+
     va_list args;
     va_start(args, fmt);
-    bool result = eprintf(fmt, args); // Printf the error message to stderr
+    bool result = vprintf(fmt, args); // Printf the error message to stderr
     va_end(args);
 
-    get_key();  // User will respond with input before going on
+    printf_cout = cout;             // Reset Printf() to print to stdout
 
+    get_key();  // User will respond with input before going on
     return result;
+}
+#define error(...) error(__FILE__, __LINE__, __func__, __VA_ARGS__)
+
+// ==================================================
+// Get an integer number from the user with a get_key() loop
+//   and print to screen
+// ==================================================
+BOOLEAN get_int(INTN *number) {
+    EFI_INPUT_KEY key = {0};
+
+    if (!number) return false;  // Passed in NULL pointer
+
+    *number = 0;
+    do {
+        key = get_key();
+        if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
+        if (isdigit_c16(key.UnicodeChar)) {
+            *number = (*number * 10) + (key.UnicodeChar - u'0');
+            printf(u"%c", key.UnicodeChar);
+        }
+    } while (key.UnicodeChar != u'\r');
+
+    return true;
+}
+
+// ==================================================
+// Get a hexadecimal number from the user with a get_key() loop
+//   and print to screen
+// ==================================================
+BOOLEAN get_hex(UINTN *number) {
+    EFI_INPUT_KEY key = {0};
+
+    if (!number) return false;  // Passed in NULL pointer
+
+    *number = 0;
+    do {
+        key = get_key();
+        if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
+        if (isdigit_c16(key.UnicodeChar)) {
+            *number = (*number * 16) + (key.UnicodeChar - u'0');
+            printf(u"%c", key.UnicodeChar);
+        } else if (key.UnicodeChar >= u'a' && key.UnicodeChar <= u'f') {
+            *number = (*number * 16) + (key.UnicodeChar - u'a' + 10);
+            printf(u"%c", key.UnicodeChar);
+        } else if (key.UnicodeChar >= u'A' && key.UnicodeChar <= u'F') {
+            *number = (*number * 16) + (key.UnicodeChar - u'A' + 10);
+            printf(u"%c", key.UnicodeChar);
+        }
+    } while (key.UnicodeChar != u'\r');
+
+    return true;
 }
 
 // =================================================================
@@ -473,7 +497,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        error(status, u"Could not open Loaded Image Protocol\r\n");
         goto cleanup;
     }
 
@@ -488,7 +512,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open Simple File System Protocol\r\n", status);
+        error(status, u"Could not open Simple File System Protocol\r\n");
         goto cleanup;
     }
 
@@ -496,7 +520,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     EFI_FILE_PROTOCOL *root = NULL;
     status = sfsp->OpenVolume(sfsp, &root);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not Open Volume for root directory in ESP\r\n", status);
+        error(status, u"Could not Open Volume for root directory in ESP\r\n");
         goto cleanup;
     }
 
@@ -509,7 +533,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
                         0);
 
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open file '%s'\r\n", status, path);
+        error(status, u"Could not open file '%s'\r\n", path);
         goto cleanup;
     }
 
@@ -519,7 +543,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     UINTN buf_size = sizeof(EFI_FILE_INFO);
     status = file->GetInfo(file, &fi_guid, &buf_size, &file_info);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not get file info for file '%s'\r\n", status, path);
+        error(status, u"Could not get file info for file '%s'\r\n", path);
         goto file_cleanup;
     }
 
@@ -527,19 +551,19 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     buf_size = file_info.FileSize;
     status = bs->AllocatePool(EfiLoaderData, buf_size, &file_buffer);
     if (EFI_ERROR(status) || buf_size != file_info.FileSize) {
-        error(u"Error %x; Could not allocate memory for file '%s'\r\n", status, path);
+        error(status, u"Could not allocate memory for file '%s'\r\n", path);
         goto file_cleanup;
     }
 
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not get file info for file '%s'\r\n", status, path);
+        error(status, u"Could not get file info for file '%s'\r\n", path);
         goto file_cleanup;
     }
 
     // Read file into buffer
     status = file->Read(file, &buf_size, file_buffer);
     if (EFI_ERROR(status) || buf_size != file_info.FileSize) {
-        error(u"Error %x; Could not read file '%s' into buffer\r\n", status, path);
+        error(status, u"Could not read file '%s' into buffer\r\n", path);
         goto file_cleanup;
     }
 
@@ -593,7 +617,7 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
 
     status = bs->LocateHandleBuffer(ByProtocol, &bio_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not locate any Block IO Protocols.\r\n", status);
+        error(status, u"Could not locate any Block IO Protocols.\r\n");
         return buffer;
     }
 
@@ -608,7 +632,7 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
                                   EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 
         if (EFI_ERROR(status)) {
-            error(u"\r\nERROR: %x; Could not Open Block IO protocol on handle %u.\r\n", status, i);
+            error(status, u"Could not Open Block IO protocol on handle %u.\r\n", i);
             // Close open protocol 
             bs->CloseProtocol(handle_buffer[i],
                               &bio_guid,
@@ -630,8 +654,7 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
     }
 
     if (!found) {
-        error(u"\r\nERROR: Could not find Block IO protocol for disk with ID %u.\r\n", 
-              disk_mediaID);
+        error(0, u"Could not find Block IO protocol for disk with ID %u.\r\n", disk_mediaID);
         return buffer;
     }
 
@@ -645,7 +668,7 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not Open Disk IO protocol on handle.\r\n", status, i);
+        error(status, u"Could not Open Disk IO protocol on handle %u.\r\n", i);
         goto cleanup;
     }
 
@@ -657,7 +680,7 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
         status = bs->AllocatePages(AllocateAnyPages, EfiLoaderData, pages_needed, &buffer);
 
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not Allocate buffer for disk data.\r\n", status);
+        error(status, u"Could not Allocate buffer for disk data.\r\n");
         bs->CloseProtocol(handle_buffer[i],
                           &dio_guid,
                           image,
@@ -668,7 +691,7 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
     // Use Disk IO Read to read into allocated buffer
     status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, (VOID *)buffer);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not read Disk LBAs into buffer.\r\n", status);
+        error(status, u"Could not read Disk LBAs into buffer.\r\n");
     }
 
     // Close disk IO protocol when done
@@ -859,8 +882,12 @@ EFI_STATUS set_text_mode(void) {
                         cout->SetMode(cout, mode_index);
                         cout->QueryMode(cout, mode_index, &text_modes[mode_index].cols, &text_modes[mode_index].rows);
 
+                        // Set global rows/cols values
+                        text_rows = text_modes[mode_index].rows;
+                        text_cols = text_modes[mode_index].cols;
+
                         // Clear text screen
-			cout->ClearScreen(cout);
+			            cout->ClearScreen(cout);
 
                         getting_input = false;  // Will leave input loop and redraw screen
                         mode_index = 0;         // Reset last selected mode in menu
@@ -895,7 +922,7 @@ EFI_STATUS set_graphics_mode(void) {
 
     status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
+        error(status, u"Could not locate GOP! :(\r\n");
         return status;
     }
 
@@ -913,7 +940,7 @@ EFI_STATUS set_graphics_mode(void) {
                                 &mode_info);
 
         if (EFI_ERROR(status)) {
-            error(u"\r\nERROR: %x; Could not Query GOP Mode %u\r\n", status, gop->Mode->Mode);
+            error(status, u"Could not Query GOP Mode %u\r\n", gop->Mode->Mode);
             return status;
         }
 
@@ -1140,7 +1167,7 @@ EFI_STATUS test_mouse(void) {
 
     status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
+        error(status, u"Could not locate GOP! :(\r\n");
         return status;
     }
     if((*gop).Mode != NULL) {
@@ -1152,7 +1179,7 @@ EFI_STATUS test_mouse(void) {
     // Use LocateHandleBuffer() to find all SPPs 
     status = bs->LocateHandleBuffer(ByProtocol, &spp_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not locate Simple Pointer Protocol handle buffer.\r\n", status);
+        error(status, u"Could not locate Simple Pointer Protocol handle buffer.\r\n");
     }
 
     cout->ClearScreen(cout);
@@ -1169,7 +1196,7 @@ EFI_STATUS test_mouse(void) {
                                   EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 
         if (EFI_ERROR(status)) {
-            error(u"\r\nERROR: %x; Could not Open Simple Pointer Protocol on handle.\r\n", status);
+            error(status, u"Could not Open Simple Pointer Protocol on handle.\r\n");
             continue;
         }
 
@@ -1196,7 +1223,7 @@ EFI_STATUS test_mouse(void) {
         }
     }
     
-    if (!found_mode) error(u"\r\nERROR: Could not find any valid SPP Mode.\r\n");
+    if (!found_mode) error(0, u"\r\nCould not find any valid SPP Mode.\r\n");
 
     // Free memory pool allocated by LocateHandleBuffer()
     bs->FreePool(handle_buffer);
@@ -1208,7 +1235,7 @@ EFI_STATUS test_mouse(void) {
 
     status = bs->LocateHandleBuffer(ByProtocol, &app_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) 
-        error(u"\r\nERROR: %x; Could not locate Absolute Pointer Protocol handle buffer.\r\n", status);
+        error(status, u"Could not locate Absolute Pointer Protocol handle buffer.\r\n");
 
     printf(u"\r\n");    // Separate SPP and APP info visually
 
@@ -1222,7 +1249,7 @@ EFI_STATUS test_mouse(void) {
                                   EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 
         if (EFI_ERROR(status)) {
-            error(u"\r\nERROR: %x; Could not Open Simple Pointer Protocol on handle.\r\n", status);
+            error(status, u"Could not Open Simple Pointer Protocol on handle.\r\n");
             continue;
         }
 
@@ -1251,10 +1278,10 @@ EFI_STATUS test_mouse(void) {
         }
     }
     
-    if (!found_mode) error(u"\r\nERROR: Could not find any valid APP Mode.\r\n");
+    if (!found_mode) error(0, u"Could not find any valid APP Mode.\r\n");
 
     if (num_protocols == 0) {
-        error(u"\r\nERROR: Could not find any Simple or Absolute Pointer Protocols.\r\n");
+        error(0, u"Could not find any Simple or Absolute Pointer Protocols.\r\n");
         return 1;
     }
 
@@ -1463,7 +1490,7 @@ EFI_STATUS read_esp_files(void) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        error(status, u"Could not open Loaded Image Protocol\r\n");
         return status;
     }
 
@@ -1478,7 +1505,7 @@ EFI_STATUS read_esp_files(void) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open Simple File System Protocol\r\n", status);
+        error(status, u"Could not open Simple File System Protocol\r\n");
         return status;
     }
 
@@ -1486,7 +1513,7 @@ EFI_STATUS read_esp_files(void) {
     EFI_FILE_PROTOCOL *dirp = NULL;
     status = sfsp->OpenVolume(sfsp, &dirp);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not Open Volume for root directory\r\n", status);
+        error(status, u"Could not Open Volume for root directory\r\n");
         goto cleanup;
     }
 
@@ -1570,8 +1597,7 @@ EFI_STATUS read_esp_files(void) {
                                             0);
 
                         if (EFI_ERROR(status)) {
-                            error(u"Error %x; Could not open new directory %s\r\n", 
-                                  status, file_info.FileName);
+                            error(status, u"Could not open new directory %s\r\n", file_info.FileName);
                             goto cleanup;
                         }
 
@@ -1606,8 +1632,7 @@ EFI_STATUS read_esp_files(void) {
                     buf_size = file_info.FileSize;
                     status = bs->AllocatePool(EfiLoaderData, buf_size, &buffer);
                     if (EFI_ERROR(status)) {
-                        error(u"Error %x; Could not allocate memory for file %s\r\n", 
-                              status, file_info.FileName);
+                        error(status, u"Could not allocate memory for file %s\r\n", file_info.FileName);
                         goto cleanup;
                     }
 
@@ -1620,21 +1645,19 @@ EFI_STATUS read_esp_files(void) {
                                         0);
 
                     if (EFI_ERROR(status)) {
-                        error(u"Error %x; Could not open file %s\r\n", 
-                              status, file_info.FileName);
+                        error(status, u"Could not open file %s\r\n", file_info.FileName);
                         goto cleanup;
                     }
 
                     // Read file into buffer
                     status = dirp->Read(file, &buf_size, buffer);
                     if (EFI_ERROR(status)) {
-                        error(u"Error %x; Could not read file %s into buffer.\r\n", 
-                              status, file_info.FileName);
+                        error(status, u"Could not read file %s into buffer.\r\n", file_info.FileName);
                         goto cleanup;
                     } 
 
                     if (buf_size != file_info.FileSize) {
-                        error(u"Error: Could not read all of file %s into buffer.\r\n" 
+                        error(0, u"Could not read all of file %s into buffer.\r\n" 
                               u"Bytes read: %u, Expected: %u\r\n",
                               file_info.FileName, buf_size, file_info.FileSize);
                         goto cleanup;
@@ -1708,7 +1731,7 @@ EFI_STATUS print_block_io_partitions(void) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        error(status, u"Could not open Loaded Image Protocol\r\n");
         return status;
     }
 
@@ -1719,7 +1742,7 @@ EFI_STATUS print_block_io_partitions(void) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not open Block IO Protocol for this loaded image.\r\n", status);
+        error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
         return status;
     }
 
@@ -1738,7 +1761,7 @@ EFI_STATUS print_block_io_partitions(void) {
     // Loop through and print all partition information found
     status = bs->LocateHandleBuffer(ByProtocol, &bio_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not locate any Block IO Protocols.\r\n", status);
+        error(status, u"Could not locate any Block IO Protocols.\r\n");
         return status;
     }
 
@@ -1752,7 +1775,7 @@ EFI_STATUS print_block_io_partitions(void) {
                                   EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 
         if (EFI_ERROR(status)) {
-            error(u"\r\nERROR: %x; Could not Open Block IO protocol on handle %u.\r\n", status, i);
+            error(status, u"Could not Open Block IO protocol on handle %u.\r\n", i);
             continue;
         }
 
@@ -1803,8 +1826,7 @@ EFI_STATUS print_block_io_partitions(void) {
                                       EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
 
             if (EFI_ERROR(status)) {
-                error(u"\r\nERROR: %x; Could not Open Partition Info protocol on handle %u.\r\n", 
-                      status, i);
+                error(status, u"Could not Open Partition Info protocol on handle %u.\r\n", i);
             } else {
                 if      (pip->Type == PARTITION_TYPE_OTHER) printf(u"<Other Type>\r\n");
                 else if (pip->Type == PARTITION_TYPE_MBR)   printf(u"<MBR>\r\n");
@@ -1855,7 +1877,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not open Loaded Image Protocol\r\n", status);
+        error(status, u"Could not open Loaded Image Protocol\r\n");
         return status;
     }
 
@@ -1867,7 +1889,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
                               NULL,
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not open Block IO Protocol for this loaded image.\r\n", status);
+        error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
         return status;
     }
 
@@ -1904,7 +1926,7 @@ VOID *load_elf(VOID *elf_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_
 
     // Only allow PIE ELF files
     if (ehdr->e_type != ET_DYN) {
-        error(u"ELF is not a PIE file; e_type is not ETDYN/0x03\r\n");
+        error(0, u"ELF is not a PIE file; e_type is not ETDYN/0x03\r\n");
         return NULL;
     }
 
@@ -1952,7 +1974,7 @@ VOID *load_elf(VOID *elf_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_
     UINTN pages_needed = (max_memory_needed + (PAGE_SIZE-1)) / PAGE_SIZE;
     status = bs->AllocatePages(AllocateAnyPages, EfiLoaderCode, pages_needed, &program_buffer);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not allocate memory for ELF program\r\n", status);
+        error(status, u"Could not allocate memory for ELF program\r\n");
         return NULL;
     }
 
@@ -2011,12 +2033,12 @@ VOID *load_pe(VOID *pe_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_si
 
     // Validate some data
     if (coff_hdr->Machine != 0x8664) {
-        error(u"Error: Machine type not AMD64.\r\n");
+        error(0, u"Machine type not AMD64.\r\n");
         return NULL;
     }
 
     if (!(coff_hdr->Characteristics & IMAGE_FILE_EXECUTABLE_IMAGE)) {
-        error(u"Error: File not an executable image.\r\n");
+        error(0, u"File not an executable image.\r\n");
         return NULL;
     }
 
@@ -2034,12 +2056,12 @@ VOID *load_pe(VOID *pe_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_si
 
     // Validate info
     if (opt_hdr->Magic != 0x20B) {
-        error(u"Error: File not a PE32+ file.\r\n");
+        error(0, u"File not a PE32+ file.\r\n");
         return NULL;
     }
 
     if (!(opt_hdr->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE)) {
-        error(u"Error: File not a PIE file.\r\n");
+        error(0, u"File not a PIE file.\r\n");
         return NULL;
     }
 
@@ -2049,7 +2071,7 @@ VOID *load_pe(VOID *pe_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_si
     UINTN pages_needed = (opt_hdr->SizeOfImage + (PAGE_SIZE-1)) / PAGE_SIZE;
     status = bs->AllocatePages(AllocateAnyPages, EfiLoaderCode, pages_needed, &program_buffer);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not allocate memory for PE file.\r\n", status);
+        error(status, u"Could not allocate memory for PE file.\r\n");
         return NULL;
     }
 
@@ -2113,7 +2135,7 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
                               &mmap->desc_version);
 
     if (EFI_ERROR(status) && status != EFI_BUFFER_TOO_SMALL) {
-        error(u"Could not get initial memory map size.\r\n");
+        error(0, u"Could not get initial memory map size.\r\n");
         return status;
     }
 
@@ -2123,7 +2145,7 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
     mmap->size += mmap->desc_size * 2;  
     status = bs->AllocatePool(EfiLoaderData, mmap->size,(VOID **)&mmap->map);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not allocate buffer for memory map '%s'\r\n", status);
+        error(status, u"Could not allocate buffer for memory map '%s'\r\n");
         return status;
     }
 
@@ -2135,7 +2157,7 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
                               &mmap->desc_size,
                               &mmap->desc_version);
     if (EFI_ERROR(status)) {
-        error(u"Error %x; Could not get UEFI memory map! :(\r\n", status);
+        error(status, u"Could not get UEFI memory map! :(\r\n");
         return status;
     }
 
@@ -2171,7 +2193,7 @@ void *mmap_allocate_pages(Memory_Map_Info *mmap, UINTN pages) {
 
         if (i >= mmap->size / mmap->desc_size) {
             // Ran out of descriptors to check in memory map
-            error(u"\r\nERROR: Could not find any memory to allocate pages for.\r\n");
+            error(0, u"\r\nCould not find any memory to allocate pages for.\r\n");
             return NULL;
         }
     }
@@ -2286,7 +2308,7 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
     UINTN runtime_mmap_pages = (runtime_descriptors * mmap->desc_size) + ((PAGE_SIZE-1) / PAGE_SIZE);
     EFI_MEMORY_DESCRIPTOR *runtime_mmap = mmap_allocate_pages(mmap, runtime_mmap_pages);
     if (!runtime_mmap) {
-        error(u"ERROR: Could not allocate runtime descriptors memory map\r\n");
+        error(0, u"Could not allocate runtime descriptors memory map\r\n");
         return;
     }
 
@@ -2315,7 +2337,7 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
                                                  mmap->desc_size, 
                                                  mmap->desc_version,
                                                  runtime_mmap);
-    if (EFI_ERROR(status)) error(u"ERROR: SetVirtualAddressMap()\r\n");
+    if (EFI_ERROR(status)) error(0, u"SetVirtualAddressMap()\r\n");
 }
 
 // ==========================================
@@ -2334,7 +2356,7 @@ EFI_STATUS load_kernel(void) {
     UINTN buf_size = 0;
     file_buffer = read_esp_file_to_buffer(file_name, &buf_size);
     if (!file_buffer) {
-        error(u"Could not find or read file '%s' to buffer\r\n", file_name);
+        error(0, u"Could not find or read file '%s' to buffer\r\n", file_name);
         goto exit;
     }
 
@@ -2342,7 +2364,7 @@ EFI_STATUS load_kernel(void) {
     char *str_pos = NULL;
     str_pos = strstr(file_buffer, "kernel");
     if (!str_pos) {
-        error(u"Could not find kernel file in data partition\r\n");
+        error(0, u"Could not find kernel file in data partition\r\n");
         goto cleanup;
     }
 
@@ -2350,7 +2372,7 @@ EFI_STATUS load_kernel(void) {
 
     str_pos = strstr(file_buffer, "FILE_SIZE=");
     if (!str_pos) {
-        error(u"Could not find file size from buffer for '%s'\r\n", file_name);
+        error(0, u"Could not find file size from buffer for '%s'\r\n", file_name);
         goto cleanup;
     }
 
@@ -2359,7 +2381,7 @@ EFI_STATUS load_kernel(void) {
 
     str_pos = strstr(file_buffer, "DISK_LBA=");
     if (!str_pos) {
-        error(u"Could not find disk lba value from buffer for '%s'\r\n", file_name);
+        error(0, u"Could not find disk lba value from buffer for '%s'\r\n", file_name);
         goto cleanup;
     }
 
@@ -2372,7 +2394,7 @@ EFI_STATUS load_kernel(void) {
     UINT32 image_mediaID = 0;
     status = get_disk_image_mediaID(&image_mediaID);
     if (EFI_ERROR(status)) {
-        error(u"Error: %x; Could not find or get MediaID value for disk image\r\n", status);
+        error(status, u"Could not find or get MediaID value for disk image\r\n");
         bs->FreePool(file_buffer);  // Free memory allocated for ESP file
         goto exit;
     }
@@ -2380,7 +2402,7 @@ EFI_STATUS load_kernel(void) {
     // Read disk lbas for file into buffer
     disk_buffer = (VOID *)read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID, true);
     if (!disk_buffer) {
-        error(u"Could not find or read data partition file to buffer\r\n");
+        error(0, u"Could not find or read data partition file to buffer\r\n");
         bs->FreePool(file_buffer);  // Free memory allocated for ESP file
         goto exit;
     }
@@ -2391,7 +2413,7 @@ EFI_STATUS load_kernel(void) {
 
     status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
     if (EFI_ERROR(status)) {
-        error(u"\r\nERROR: %x; Could not locate GOP! :(\r\n", status);
+        error(status, u"Could not locate GOP! :(\r\n");
         return status;
     }
 
@@ -2461,7 +2483,7 @@ EFI_STATUS load_kernel(void) {
         retries++;
     }
     if (retries == MAX_RETRIES) {
-        error(u"Error: Could not Exit Boot Services!\r\n");
+        error(0, u"Could not Exit Boot Services!\r\n");
         goto cleanup;
     }
 
@@ -2622,9 +2644,12 @@ EFI_STATUS print_memory_map(void) {
             usable_bytes += desc->NumberOfPages * 4096;
         }
 
-        // Pause every ~20 lines
-        if (i > 0 && i % 20 == 0) 
+        // Pause if reached bottom of screen
+        if (cout->Mode->CursorRow >= text_rows-2) {
+            printf(u"Press any key to continue...\r\n");
             get_key();
+            cout->ClearScreen(cout);
+        }
     }
 
     printf(u"\r\nUsable memory: %u / %u MiB / %u GiB\r\n",
@@ -2701,30 +2726,24 @@ VOID *get_config_table_by_guid(EFI_GUID guid) {
 // Print ACPI table header
 // =========================
 void print_acpi_table_header(ACPI_TABLE_HEADER header) { 
-    printf(u"Signature: %c%c%c%c\r\n"
+    printf(u"Signature: %.4hhs\r\n"
            u"Length: %u\r\n"
-           u"Revision: %x\r\n"
+           u"Revision: %#x\r\n"
            u"Checksum: %u\r\n"
-           u"OEMID: %c%c%c%c%c%c\r\n"
-           u"OEM Table ID: %c%c%c%c%c%c%c%c\r\n"
-           u"OEM Revision: %x\r\n"
-           u"Creator ID: %c%c%c%c\r\n"
-           u"Creator Revision: %x\r\n",
-           header.signature[0], header.signature[1], header.signature[2], header.signature[3], 
+           u"OEMID: %.6hhs\r\n"
+           u"OEM Table ID: %.8hhs\r\n"
+           u"OEM Revision: %#x\r\n"
+           u"Creator ID: %.4hhs\r\n"
+           u"Creator Revision: %#x\r\n",
+           &header.signature[0],
            (UINTN)header.length,
            (UINTN)header.revision,
            (UINTN)header.checksum,
-
-           header.OEMID[0], header.OEMID[1], header.OEMID[2], header.OEMID[3], header.OEMID[4], 
-               header.OEMID[5], 
-
-           header.OEM_table_id[0], header.OEM_table_id[1], header.OEM_table_id[2], 
-               header.OEM_table_id[3], header.OEM_table_id[4], header.OEM_table_id[5], 
-               header.OEM_table_id[6], header.OEM_table_id[7], 
-
-            (UINTN)header.OEM_revision,
-            header.creator_id[0], header.creator_id[1], header.creator_id[2], header.creator_id[3], 
-            (UINTN)header.creator_revision);
+           &header.OEMID[0], 
+           &header.OEM_table_id[0],
+           (UINTN)header.OEM_revision,
+           &header.creator_id[0], 
+           (UINTN)header.creator_revision);
 }
 
 // =======================================
@@ -2745,13 +2764,13 @@ EFI_STATUS print_acpi_tables(void) {
         acpi_guid = (EFI_GUID)ACPI_TABLE_GUID;
         rsdp_ptr = get_config_table_by_guid(acpi_guid);
         if (!rsdp_ptr) {
-            error(u"Error: Could not find ACPI configuration table\r\n");
+            error(0, u"Could not find ACPI configuration table\r\n");
             return 1;
         } else {
-            printf(u"ACPI 1.0 Table found at %x\r\n", rsdp_ptr);
+            printf(u"ACPI 1.0 Table found at %#x\r\n", rsdp_ptr);
         }
     } else {
-        printf(u"ACPI 2.0 Table found at %x\r\n", rsdp_ptr);
+        printf(u"ACPI 2.0 Table found at %#x\r\n", rsdp_ptr);
         acpi_20 = true;
     }
 
@@ -2759,16 +2778,16 @@ EFI_STATUS print_acpi_tables(void) {
     UINT8 *rsdp = rsdp_ptr;
     if (acpi_20) {
         printf(u"RSDP:\r\n"
-               u"Signature: %c%c%c%c%c%c%c%c\r\n"
+               u"Signature: %.8hhs\r\n"
                u"Checksum: %u\r\n"
-               u"OEMID: %c%c%c%c%c%c\r\n"
+               u"OEMID: %.6hhs\r\n"
                u"RSDT Address: %x\r\n"
                u"Length: %u\r\n"
                u"XSDT Address: %x\r\n"
                u"Extended Checksum: %u\r\n",
-               rsdp[0], rsdp[1], rsdp[2], rsdp[3], rsdp[4], rsdp[5], rsdp[6], rsdp[7],
+               &rsdp[0], 
                (UINTN)rsdp[8],
-               rsdp[9], rsdp[10], rsdp[11], rsdp[12], rsdp[13], rsdp[14], 
+               &rsdp[9], 
                *(UINT32 *)&rsdp[16],
                *(UINT32 *)&rsdp[20],
                *(UINT64 *)&rsdp[24],
@@ -2879,6 +2898,280 @@ EFI_STATUS print_acpi_tables(void) {
     return EFI_SUCCESS;
 }
 
+// ================================
+// Print all EFI Global Variables
+// ================================
+EFI_STATUS print_efi_global_variables(void) { 
+    cout->ClearScreen(cout);
+
+    // Close Timer Event for cleanup
+    bs->CloseEvent(timer_event);
+
+    UINTN var_name_size = 0;
+    CHAR16 *var_name_buf = 0;
+    EFI_GUID vendor_guid = {0};
+    EFI_STATUS status = EFI_SUCCESS;
+
+    var_name_size = 2;
+    status = bs->AllocatePool(EfiLoaderData, var_name_size, (VOID **)&var_name_buf);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not allocate 2 bytes...\r\n");
+        return status;
+    }
+
+    // Set variable name to point to initial single null byte, to start off call to get list of
+    //   variable names
+    *var_name_buf = u'\0';
+
+    status = rs->GetNextVariableName(&var_name_size, var_name_buf, &vendor_guid);
+    while (status != EFI_NOT_FOUND) {   // End of list
+        if (status == EFI_BUFFER_TOO_SMALL) {
+            // Reallocate larger buffer for variable name
+            CHAR16 *temp_buf = NULL;
+            status = bs->AllocatePool(EfiLoaderData, var_name_size, (VOID **)&temp_buf);
+            if (EFI_ERROR(status)) {
+                error(status, u"Could not allocate %u bytes of memory for next variable name.\r\n",
+                              var_name_size);
+                return status;
+            }
+            
+            strcpy_u16(temp_buf, var_name_buf);  // Copy old buffer to new buffer
+            bs->FreePool(var_name_buf);          // Free old buffer
+            var_name_buf = temp_buf;             // Set new buffer
+
+            status = rs->GetNextVariableName(&var_name_size, var_name_buf, &vendor_guid);
+            continue;
+        }
+
+        // Print variable name
+        printf(u"%.*s\r\n", var_name_size, var_name_buf);
+
+        // Pause at bottom of screen
+        if (cout->Mode->CursorRow >= text_rows-2) {
+            printf(u"Press any key to continue...\r\n");
+            get_key();
+            cout->ClearScreen(cout);
+        }
+        status = rs->GetNextVariableName(&var_name_size, var_name_buf, &vendor_guid);
+    }
+
+    // Free buffer when done
+    bs->FreePool(var_name_buf);
+
+    printf(u"\r\nPress any key to go back...\r\n");
+    get_key();
+    return EFI_SUCCESS;
+}
+
+// ==========================================================
+// Print Boot variable values and allow user to change them
+// ==========================================================
+EFI_STATUS change_boot_variables(void) { 
+    // Close Timer Event for cleanup
+    bs->CloseEvent(timer_event);
+
+    // Get Device Path to Text protocol to print Load Option device/file paths
+    EFI_STATUS status = EFI_SUCCESS;
+    EFI_GUID dpttp_guid = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dpttp;
+    status = bs->LocateProtocol(&dpttp_guid, NULL, (VOID **)&dpttp);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate Device Path To Text Protocol.\r\n");
+        return status;
+    }
+
+    // Overall screen loop
+    UINT32 boot_order_attributes = 0;
+    while (true) {
+        cout->ClearScreen(cout);
+
+        UINTN var_name_size = 0;
+        CHAR16 *var_name_buf = 0;
+        EFI_GUID vendor_guid = {0};
+
+        var_name_size = 2;
+        status = bs->AllocatePool(EfiLoaderData, var_name_size, (VOID **)&var_name_buf);
+        if (EFI_ERROR(status)) {
+            error(status, u"Could not allocate 2 bytes...\r\n");
+            return status;
+        }
+
+        // Set variable name to point to initial single null byte, to start off call to get list of
+        //   variable names
+        *var_name_buf = u'\0';
+
+        status = rs->GetNextVariableName(&var_name_size, var_name_buf, &vendor_guid);
+        while (status != EFI_NOT_FOUND) {   // End of list
+            if (status == EFI_BUFFER_TOO_SMALL) {
+                // Reallocate larger buffer for variable name
+                CHAR16 *temp_buf = NULL;
+                status = bs->AllocatePool(EfiLoaderData, var_name_size, (VOID **)&temp_buf);
+                if (EFI_ERROR(status)) {
+                    error(status, u"Could not allocate %u bytes of memory for next variable name.\r\n",
+                                  var_name_size);
+                    return status;
+                }
+                
+                strcpy_u16(temp_buf, var_name_buf);  // Copy old buffer to new buffer
+                bs->FreePool(var_name_buf);          // Free old buffer
+                var_name_buf = temp_buf;             // Set new buffer
+
+                status = rs->GetNextVariableName(&var_name_size, var_name_buf, &vendor_guid);
+                continue;
+            }
+
+            // Print variable name and their value(s)
+            if (!memcmp(var_name_buf, u"Boot", 8)) {
+                printf(u"%.*s: ", var_name_size, var_name_buf);
+
+                // Get variable value
+                UINT32 attributes = 0;
+                UINTN data_size = 0;
+                VOID *data = NULL;
+
+                // Call first with 0 data size to get actual size needed
+                rs->GetVariable(var_name_buf, &vendor_guid, &attributes, &data_size, NULL);
+
+                status = bs->AllocatePool(EfiLoaderData, data_size, (VOID **)&data);
+                if (EFI_ERROR(status)) {
+                    error(status, u"Could not allocate %u bytes of memory for GetVariable().\r\n",
+                                  data_size);
+                    goto cleanup;
+                }
+
+                // Get actual data now with correct size
+                rs->GetVariable(var_name_buf, &vendor_guid, &attributes, &data_size, data);
+
+                if (!memcmp(var_name_buf, u"BootOrder", 18)) {
+                    boot_order_attributes = attributes; // Use if user sets new BootOrder value
+
+                    // Print array of UINT16 values
+                    UINT16 *p = data;
+
+                    printf(u"0x");
+                    for (UINTN i = 0; i < data_size / 2; i++)
+                        printf(u"%.4x,", *p++);
+
+                    printf(u"\r\n\r\n");
+                    goto next;
+                }
+
+                if (!memcmp(var_name_buf, u"BootOptionSupport", 34)) {
+                    // Single UINT32 value
+                    UINT32 *p = data;
+                    printf(u"%#.8x\r\n\r\n", *p);
+                    goto next;
+                }
+
+                if (!memcmp(var_name_buf, u"BootNext",    18) || 
+                    !memcmp(var_name_buf, u"BootCurrent", 22)) {
+
+                    // Single UINT16 value
+                    UINT16 *p = data;
+                    printf(u"%#.4hx\r\n\r\n", *p);
+                    goto next;
+                }
+
+                if (isxdigit_c16(var_name_buf[4])) {
+                    // Boot#### load option 
+                    EFI_LOAD_OPTION *load_option = (EFI_LOAD_OPTION *)data;
+                    CHAR16 *description = (CHAR16 *)((UINT8 *)data + sizeof(UINT32) + sizeof(UINT16));
+                    printf(u"Description: %s\r\n", description);
+
+                    CHAR16 *p = description;
+                    UINTN strlen =  0;
+                    while (p[strlen]) strlen++;  
+                    strlen++;                    // Skip null byte
+
+                    EFI_DEVICE_PATH_PROTOCOL *file_path_list = 
+                        (EFI_DEVICE_PATH_PROTOCOL *)(description + strlen); 
+
+                    CHAR16 *device_path_text = 
+                        dpttp->ConvertDevicePathToText(file_path_list, FALSE, FALSE);
+
+                    printf(u"Device Path: %s\r\n", device_path_text ? device_path_text : u"(null)");
+
+                    UINT8 *optional_data = (UINT8 *)file_path_list + load_option->FilePathListLength;
+                    UINTN optional_data_size = data_size - (optional_data - (UINT8 *)data);
+                    if (optional_data_size > 0) {
+                        printf(u"Optional Data: 0x");
+                        for (UINTN i = 0; i < optional_data_size; i++)
+                            printf(u"%.2hhx", optional_data[i]);
+
+                        printf(u"\r\n");
+                    }
+
+                    printf(u"\r\n");
+                }
+
+                next:
+                bs->FreePool(data);
+            }
+
+            // Pause at bottom of screen
+            if (cout->Mode->CursorRow >= text_rows-2) {
+                printf(u"Press any key to continue...\r\n");
+                get_key();
+                cout->ClearScreen(cout);
+            }
+            status = rs->GetNextVariableName(&var_name_size, var_name_buf, &vendor_guid);
+        }
+
+        // Allow user to change values
+        printf(u"Press '1' to change BootOrder, '2' to change BootNext, or other to go back...");
+        EFI_INPUT_KEY key = get_key();
+        if (key.UnicodeChar == u'1') {
+            // Change BootOrder - set new array of UINT16 values
+            #define MAX_BOOT_OPTIONS 10
+            UINT16 option_array[MAX_BOOT_OPTIONS] = {0};
+            UINTN new_option = 0;
+            UINT16 num_options = 0;
+            for (UINTN i = 0; i < MAX_BOOT_OPTIONS; i++) {
+                printf(u"\r\nBoot Option %u (0000-FFFF): ", i+1);
+                if (!get_hex(&new_option)) break;    // Stop processing
+                option_array[num_options++] = new_option; 
+            }
+
+            EFI_GUID guid = EFI_GLOBAL_VARIABLE_GUID;
+            status = rs->SetVariable(u"BootOrder", 
+                                     &guid,
+                                     boot_order_attributes, 
+                                     num_options*2, 
+                                     option_array);
+            if (EFI_ERROR(status)) 
+                error(status, u"Could not Set new value for BootOrder.\r\n");
+
+        } else if (key.UnicodeChar == u'2') {
+            // Change BootNext value - set new UINT16
+            printf(u"\r\nBootNext value (0000-FFFF): ");
+            UINTN value = 0;
+            if (get_hex(&value)) {
+                EFI_GUID guid = EFI_GLOBAL_VARIABLE_GUID;
+                UINT32 attr = EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS |
+                              EFI_VARIABLE_RUNTIME_ACCESS;
+
+                status = rs->SetVariable(u"BootNext", 
+                                         &guid,
+                                         attr, 
+                                         2, 
+                                         &value);
+                if (EFI_ERROR(status)) 
+                    error(status, u"Could not Set new value for BootNext.\r\n");
+            }
+
+        } else {
+            bs->FreePool(var_name_buf);
+            break;
+        }
+
+        cleanup:
+        // Free buffers when done
+        bs->FreePool(var_name_buf);
+    }
+
+    return EFI_SUCCESS;
+}
+
 // ====================
 // Entry Point
 // ====================
@@ -2907,7 +3200,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Print Memory Map",
         u"Print Configuration Tables",
         u"Print ACPI Tables",
+        u"Print EFI Global Variables",
         u"Load Kernel",
+        u"Change Boot Variables",
     };
 
     // Functions to call for each menu option
@@ -2920,7 +3215,12 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         print_memory_map,
         print_config_tables,
         print_acpi_tables,
+        print_efi_global_variables,
         load_kernel,
+        change_boot_variables,
+        // TODO:
+        // write_disk_image_to_another_disk
+        // install
     };
 
     // Screen loop
@@ -2933,6 +3233,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         // Get current text mode ColsxRows values
         UINTN cols = 0, rows = 0;
         cout->QueryMode(cout, cout->Mode->Mode, &cols, &rows);
+
+        // Set global rows/cols values
+        text_rows = rows; 
+        text_cols = cols;
 
         // Timer context will be the text mode screen bounds
         typedef struct {
@@ -2987,35 +3291,39 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             // Process input
             switch (key.ScanCode) {
                 case SCANCODE_UP_ARROW:
-                    if (current_row-1 >= min_row) {
-                        // De-highlight current row, move up 1 row, highlight new row
-                        cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                        printf(u"%s\r", menu_choices[current_row]);
+                    // De-highlight current row, move up 1 row, highlight new row
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+                    printf(u"%s\r", menu_choices[current_row]);
 
-                        current_row--;
-                        cout->SetCursorPosition(cout, 0, current_row);
-                        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"%s\r", menu_choices[current_row]);
+                    if (current_row-1 >= min_row)  
+                        current_row--;          // Go up one row
+                    else
+                        current_row = max_row;  // Wrap around to bottom of menu 
 
-                        // Reset colors
-                        cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                    }
+                    cout->SetCursorPosition(cout, 0, current_row);
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+                    printf(u"%s\r", menu_choices[current_row]);
+
+                    // Reset colors
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
                     break;
 
                 case SCANCODE_DOWN_ARROW:
-                    if (current_row+1 <= max_row) {
-                        // De-highlight current row, move down 1 row, highlight new row
-                        cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                        printf(u"%s\r", menu_choices[current_row]);
+                    // De-highlight current row, move down 1 row, highlight new row
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
+                    printf(u"%s\r", menu_choices[current_row]);
 
-                        current_row++;
-                        cout->SetCursorPosition(cout, 0, current_row);
-                        cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"%s\r", menu_choices[current_row]);
+                    if (current_row+1 <= max_row) 
+                        current_row++;          // Go down one row
+                    else
+                        current_row = min_row;  // Wrap around to top of menu
 
-                        // Reset colors
-                        cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                    }
+                    cout->SetCursorPosition(cout, 0, current_row);
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
+                    printf(u"%s\r", menu_choices[current_row]);
+
+                    // Reset colors
+                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
                     break;
 
                 case SCANCODE_ESC:
@@ -3030,7 +3338,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                         // Enter key, select choice
                         EFI_STATUS return_status = menu_funcs[current_row]();
                         if (EFI_ERROR(return_status)) {
-                            error(u"ERROR %x\r\n; Press any key to go back...", return_status);
+                            error(return_status, u"Press any key to go back...");
                         }
 
                         // Will leave input loop and reprint main menu
