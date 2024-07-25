@@ -740,6 +740,23 @@ EFI_STATUS
     IN CHAR16 *WatchdogData OPTIONAL
 );
 
+// EFI_DEVICE_PATH_PROTOCOL: UEFI Spec 2.10 Errata A section 10.2
+typedef struct _EFI_DEVICE_PATH_PROTOCOL {
+    UINT8 Type;
+    UINT8 SubType;
+    UINT8 Length[2];
+} EFI_DEVICE_PATH_PROTOCOL;
+
+// EFI_CONNECT_CONTROLLER: UEFI Spec 2.10 Errata A section 7.3.12
+typedef
+EFI_STATUS
+(EFIAPI *EFI_CONNECT_CONTROLLER) (
+    IN EFI_HANDLE               ControllerHandle,
+    IN EFI_HANDLE               *DriverImageHandle OPTIONAL,
+    IN EFI_DEVICE_PATH_PROTOCOL *RemainingDevicePath OPTIONAL,
+    IN BOOLEAN                  Recursive
+);
+
 // EFI_WAIT_FOR_EVENT: UEFI Spec 2.10 section 7.1.5
 typedef 
 EFI_STATUS
@@ -905,13 +922,6 @@ EFI_STATUS
     IN UINTN    DataSize,
     IN VOID     *Data
 );
-
-// EFI_DEVICE_PATH_PROTOCOL: UEFI Spec 2.10 Errata A section 10.2
-typedef struct _EFI_DEVICE_PATH_PROTOCOL {
-    UINT8 Type;
-    UINT8 SubType;
-    UINT8 Length[2];
-} EFI_DEVICE_PATH_PROTOCOL;
 
 // EFI_DEVICE_PATH_TO_TEXT_NODE: UEFI Spec 2.10 Errata A section 10.6.3
 typedef
@@ -1372,8 +1382,8 @@ typedef struct {
     //
     // DriverSupport Services
     //
-    void* ConnectController;
-    void* DisconnectController;
+    EFI_CONNECT_CONTROLLER ConnectController;
+    void                   *DisconnectController;
 
     //
     // Open and Close Protocol Services
