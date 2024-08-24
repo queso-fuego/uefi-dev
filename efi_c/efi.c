@@ -474,12 +474,13 @@ bool error(char *file, int line, const char *func, EFI_STATUS status, CHAR16 *fm
 // Get an integer number from the user with a get_key() loop
 //   and print to screen
 // ==================================================
-BOOLEAN get_int(INTN *number) {
+BOOLEAN get_int(INTN* number) {
     EFI_INPUT_KEY key = {0};
 
     if (!number) return false;  // Passed in NULL pointer
 
     *number = 0;
+	bool isNumber = true;
     do {
         key = get_key();
         if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
@@ -487,9 +488,12 @@ BOOLEAN get_int(INTN *number) {
             *number = (*number * 10) + (key.UnicodeChar - u'0');
             printf(u"%c", key.UnicodeChar);
         }
+		else {
+			isNumber = false;
+		}
     } while (key.UnicodeChar != u'\r');
 
-    return true;
+    return isNumber;
 }
 
 // ==================================================
@@ -3405,7 +3409,7 @@ EFI_STATUS write_to_another_disk(void) {
 		bs->FreePool(image_buffer);
 	}
 	else {
-		return EFI_SUCCESS;
+		return EFI_WARN_UNKNOWN_GLYPH;
 	}
     
     printf(u"\r\nDisk Image written to chosen disk.\r\n"
