@@ -474,12 +474,13 @@ bool error(char *file, int line, const char *func, EFI_STATUS status, CHAR16 *fm
 // Get an integer number from the user with a get_key() loop
 //   and print to screen
 // ==================================================
-BOOLEAN get_int(INTN *number) {
+BOOLEAN get_int(INTN* number) {
     EFI_INPUT_KEY key = {0};
 
     if (!number) return false;  // Passed in NULL pointer
 
     *number = 0;
+	bool isNumber = true;
     do {
         key = get_key();
         if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
@@ -487,9 +488,12 @@ BOOLEAN get_int(INTN *number) {
             *number = (*number * 10) + (key.UnicodeChar - u'0');
             printf(u"%c", key.UnicodeChar);
         }
+		else {
+			isNumber = false;
+		}
     } while (key.UnicodeChar != u'\r');
 
-    return true;
+    return isNumber;
 }
 
 // ==================================================
@@ -3327,83 +3331,87 @@ EFI_STATUS write_to_another_disk(void) {
     // Take in a number from the user for the media to write the disk image to
     printf(u"Input Media ID number to write to and press enter: ");
     INTN chosen_media = 0;
-    get_int(&chosen_media);
-    printf(u"\r\n");
+    if(get_int(&chosen_media)) {
+		printf(u"\r\n");
 
-    // Get Block IO for chosen disk media
-    bool found = false;
-    for (UINTN i = 0; i < num_handles; i++) {
-        status = bs->OpenProtocol(handle_buffer[i], 
-                                  &bio_guid,
-                                  (VOID **)&biop,
-                                  image,
-                                  NULL,
-                                  EFI_OPEN_PROTOCOL_GET_PROTOCOL);  // Don't have to use CloseProtocol()
-        if (EFI_ERROR(status)) {
-            error(status, u"Could not Get Block IO protocol on handle %u.\r\n", i);
-            continue;
-        }
+		// Get Block IO for chosen disk media
+		bool found = false;
+		for (UINTN i = 0; i < num_handles; i++) {
+			status = bs->OpenProtocol(handle_buffer[i], 
+									  &bio_guid,
+									  (VOID **)&biop,
+									  image,
+									  NULL,
+									  EFI_OPEN_PROTOCOL_GET_PROTOCOL);  // Don't have to use CloseProtocol()
+			if (EFI_ERROR(status)) {
+				error(status, u"Could not Get Block IO protocol on handle %u.\r\n", i);
+				continue;
+			}
 
-        if (biop->Media->MediaId == chosen_media) {
-            chosen_disk_bio = biop;
-            found = true;
-            break;
-        }
-    }
+			if (biop->Media->MediaId == chosen_media) {
+				chosen_disk_bio = biop;
+				found = true;
+				break;
+			}
+		}
 
-    if (!found) {
-        error(0, u"Could not find media with ID %u\r\n", chosen_media);
-        return 1;
-    }
+		if (!found) {
+			error(0, u"Could not find media with ID %u\r\n", chosen_media);
+			return 1;
+		}
 
-    // Print info about chosen disk and disk image
-    // block size for from and to disks
-    UINTN from_block_size = disk_image_bio->Media->BlockSize, 
-          to_block_size = chosen_disk_bio->Media->BlockSize;
+		// Print info about chosen disk and disk image
+		// block size for from and to disks
+		UINTN from_block_size = disk_image_bio->Media->BlockSize, 
+			  to_block_size = chosen_disk_bio->Media->BlockSize;
 
-    UINTN from_blocks = (disk_image_size + (from_block_size-1)) / from_block_size;
-    UINTN to_blocks = (disk_image_size + (to_block_size-1)) / to_block_size;
+		UINTN from_blocks = (disk_image_size + (from_block_size-1)) / from_block_size;
+		UINTN to_blocks = (disk_image_size + (to_block_size-1)) / to_block_size;
 
-    printf(u"From block size: %u, To block size: %u\r\n"
-           u"From blocks: %u, To blocks: %u\r\n",
-           from_block_size, to_block_size,
-           from_blocks, to_blocks);
+		printf(u"From block size: %u, To block size: %u\r\n"
+			   u"From blocks: %u, To blocks: %u\r\n",
+			   from_block_size, to_block_size,
+			   from_blocks, to_blocks);
 
-    // Allocate buffer to hold copy of disk image
-    VOID *image_buffer = NULL;
-    status = bs->AllocatePool(EfiLoaderData, disk_image_size, &image_buffer);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not allocate memory for disk image.\r\n");
-        return status;
-    }
+		// Allocate buffer to hold copy of disk image
+		VOID *image_buffer = NULL;
+		status = bs->AllocatePool(EfiLoaderData, disk_image_size, &image_buffer);
+		if (EFI_ERROR(status)) {
+			error(status, u"Could not allocate memory for disk image.\r\n");
+			return status;
+		}
 
-    // Read Blocks from disk image media to buffer
-    printf(u"Reading %u blocks from disk image disk to buffer...\r\n", from_blocks);
-    status = disk_image_bio->ReadBlocks(disk_image_bio,
-                                        disk_image_media_id,
-                                        0,
-                                        from_blocks * from_block_size,
-                                        image_buffer);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not read blocks from disk image media to buffer.\r\n");
-        return status;
-    }
+		// Read Blocks from disk image media to buffer
+		printf(u"Reading %u blocks from disk image disk to buffer...\r\n", from_blocks);
+		status = disk_image_bio->ReadBlocks(disk_image_bio,
+											disk_image_media_id,
+											0,
+											from_blocks * from_block_size,
+											image_buffer);
+		if (EFI_ERROR(status)) {
+			error(status, u"Could not read blocks from disk image media to buffer.\r\n");
+			return status;
+		}
 
-    // Write Blocks from buffer to chosen media disk 
-    printf(u"Writing %u blocks from buffer to chosen disk...\r\n", to_blocks);
-    status = chosen_disk_bio->WriteBlocks(chosen_disk_bio,
-                                          chosen_media,
-                                          0,
-                                          to_blocks * to_block_size,
-                                          image_buffer);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not write blocks from buffer to chosen disk.\r\n");
-        return status;
-    }
-
-    // Cleanup
-    bs->FreePool(image_buffer);
-
+		// Write Blocks from buffer to chosen media disk 
+		printf(u"Writing %u blocks from buffer to chosen disk...\r\n", to_blocks);
+		status = chosen_disk_bio->WriteBlocks(chosen_disk_bio,
+											  chosen_media,
+											  0,
+											  to_blocks * to_block_size,
+											  image_buffer);
+		if (EFI_ERROR(status)) {
+			error(status, u"Could not write blocks from buffer to chosen disk.\r\n");
+			return status;
+		}
+		
+		// Cleanup
+		bs->FreePool(image_buffer);
+	}
+	else {
+		return EFI_WARN_UNKNOWN_GLYPH;
+	}
+    
     printf(u"\r\nDisk Image written to chosen disk.\r\n"
            u"Reboot and choose new boot option when able.\r\n");
 
