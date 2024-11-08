@@ -40,7 +40,8 @@ CFLAGS ::= \
 	-Wextra \
 	-Wpedantic \
 	-mno-red-zone \
-	-ffreestanding 
+	-ffreestanding \
+	-fno-stack-protector	# Freestanding programs do not have libc stack protector functions
 
 KERNEL_SRC     ::= kernel.c
 KERNEL_CFLAGS  ::= $(CFLAGS) -fPIE
@@ -52,8 +53,8 @@ DEPENDS ::= $(EFIOBJ:.o=.d) $(KERNEL_SRC:.c=.d)
 EFI_APP ::= BOOTX64.EFI
 
 # Uncomment kernel binary format to build
-#KERNEL ::= kernel.elf    # ELF64 PIE kernel binary
-KERNEL ::= kernel.pe     # PE32+ PIE kernel binary
+KERNEL ::= kernel.elf    # ELF64 PIE kernel binary
+#KERNEL ::= kernel.pe     # PE32+ PIE kernel binary
 #KERNEL ::= kernel.binelf # Flat binary PIE kernel from ELF file
 #KERNEL ::= kernel.binpe  # Flat binary PIE kernel from PE file
 
