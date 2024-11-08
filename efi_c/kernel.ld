@@ -1,4 +1,3 @@
-ENTRY(kmain);
 SECTIONS {
     .text : {
         KEEP(*(.kernel*));

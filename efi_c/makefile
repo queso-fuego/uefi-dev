@@ -1,46 +1,39 @@
+# Aiming for POSIX.1-2024 compliance
 .POSIX:
-.PHONY: all clean
 
-SOURCES = efi.c
-OBJS = $(SOURCES:.c=.o)
-DEPENDS = $(OBJS:.o=.d)
-TARGET = BOOTX64.EFI
+# Uncomment disk image program & shell script for Windows
+#DISK_IMG_PGM    ::= write_gpt.exe
+#QEMU_SCRIPT     ::= qemu.bat
 
-# Flat binary PIE kernel binary
-#KERNEL = kernel.bin
-# ELF64 PIE kernel binary
-KERNEL = kernel.elf
-# PE32+ PIE kernel binary
-#KERNEL = kernel.pe
+# Uncomment disk image program & shell script for Linux
+DISK_IMG_PGM    ::= write_gpt
+QEMU_SCRIPT     ::= qemu.sh
 
-# Uncomment disk image exe & shell script for Windows
-#DISK_IMG_FOLDER = ..\UEFI-GPT-image-creator\
-#DISK_IMG_PGM = write_gpt.exe
-#QEMU_SCRIPT = qemu.bat
+DISK_IMG_FOLDER ::= ../UEFI-GPT-image-creator/
 
-# Uncomment disk image exe & shell script for Linux
-DISK_IMG_FOLDER = ../UEFI-GPT-image-creator/
-DISK_IMG_PGM = write_gpt
-QEMU_SCRIPT = qemu.sh
-
-# Uncomment CC/LDFLAGS for gcc
-#CC = x86_64-w64-mingw32-gcc 
-#LDFLAGS = \
+# Uncomment CC/LDFLAGS for EFI object - gcc
+#EFICC       ::= x86_64-w64-mingw32-gcc
+#EFI_LDFLAGS ::= \
 	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
-# Uncomment CC/LDFLAGS for clang
-CC = clang \
-	-target x86_64-unknown-windows 
-LDFLAGS = \
-	-target x86_64-unknown-windows \
+# Uncomment CC/LDFLAGS for EFI object - clang
+EFICC       ::= clang -target x86_64-unknown-windows 
+EFI_LDFLAGS ::= \
 	-nostdlib \
 	-fuse-ld=lld-link \
 	-Wl,-subsystem:efi_application \
 	-Wl,-entry:efi_main
 
-CFLAGS = \
+ELFCC ::= clang 
+ELFLD ::= ld
+
+PECC  ::= x86_64-w64-mingw32-gcc
+PELD  ::= x86_64-w64-mingw32-ld
+
+# Common CFLAGS
+CFLAGS ::= \
 	-std=c17 \
 	-MMD \
 	-Wall \
@@ -49,51 +42,63 @@ CFLAGS = \
 	-mno-red-zone \
 	-ffreestanding 
 
-all: $(TARGET) $(KERNEL)
+KERNEL_SRC     ::= kernel.c
+KERNEL_CFLAGS  ::= $(CFLAGS) -fPIE
+KERNEL_LDFLAGS ::= -e kmain -nostdlib -pie
+
+EFISRC  ::= efi.c
+EFIOBJ  ::= $(EFISRC:.c=.o)
+DEPENDS ::= $(EFIOBJ:.o=.d) $(KERNEL_SRC:.c=.d)
+EFI_APP ::= BOOTX64.EFI
+
+# Uncomment kernel binary format to build
+#KERNEL ::= kernel.elf    # ELF64 PIE kernel binary
+KERNEL ::= kernel.pe     # PE32+ PIE kernel binary
+#KERNEL ::= kernel.binelf # Flat binary PIE kernel from ELF file
+#KERNEL ::= kernel.binpe  # Flat binary PIE kernel from PE file
+
+# Add kernel binary to new disk image
+ADD_KERNEL = \
+	cp $(KERNEL) $(DISK_IMG_FOLDER); \
+	cd $(DISK_IMG_FOLDER); \
+	./$(DISK_IMG_PGM) -ad $(KERNEL) $(FONT);
+
+all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(KERNEL) $(EFI_APP)
 	cd $(DISK_IMG_FOLDER); \
 	./$(QEMU_SCRIPT)
 
-$(TARGET): $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $<
-	cp $(TARGET) $(DISK_IMG_FOLDER)
-	cd $(DISK_IMG_FOLDER); \
-	./$(DISK_IMG_PGM) -ad $(KERNEL); 
+$(DISK_IMG_FOLDER)/$(DISK_IMG_PGM):
+	cd $(DISK_IMG_FOLDER) && $(MAKE) 
 
-$(TEST_FILE):
-	echo TESTING > $@
+$(EFI_APP): $(EFIOBJ)
+	$(EFICC) $(EFI_LDFLAGS) -o $@ $<
 	cp $@ $(DISK_IMG_FOLDER)
+	$(ADD_KERNEL)
 
-# Flat binary - ELF/Clang
-kernel.bin: kernel.c
-	clang -c $(CFLAGS) -fPIE -o kernel.o $<
-	ld -nostdlib -Tkernel.ld --oformat binary -pie -o $@ kernel.o 
-	cp $@ $(DISK_IMG_FOLDER)
-	cd $(DISK_IMG_FOLDER); \
-	./$(DISK_IMG_PGM) -ad $(KERNEL); 
+$(EFIOBJ): $(EFISRC)
+	$(EFICC) $(CFLAGS) -c -o $@ $<
 
-# Flat binary - MINGW GCC (PE)
-#kernel.bin: kernel.c
-#	x86_64-w64-mingw32-gcc -c $(CFLAGS) -fPIE -o kernel.o $<
-#	x86_64-w64-mingw32-ld -nostdlib -Tkernel.ld --image-base=0 -pie -o kernel.obj kernel.o
-#	objcopy -O binary kernel.obj $@
-#	cp $@ $(DISK_IMG_FOLDER)
-#	cd $(DISK_IMG_FOLDER); \
-#	./$(DISK_IMG_PGM) -ad $(KERNEL); 
+kernel.elf: $(KERNEL_SRC)
+	$(ELFCC) $(KERNEL_CFLAGS) $(KERNEL_LDFLAGS) -o $@ $<
+	$(ADD_KERNEL)
 
-kernel.elf: kernel.c
-	clang $(CFLAGS) -fPIE -e kmain -nostdlib -o $@ $<
-	cp $@ $(DISK_IMG_FOLDER)
-	cd $(DISK_IMG_FOLDER); \
-	./$(DISK_IMG_PGM) -ad $(KERNEL); 
+kernel.pe: $(KERNEL_SRC)
+	$(PECC) $(KERNEL_CFLAGS) $(KERNEL_LDFLAGS) -o $@ $<
+	$(ADD_KERNEL)
 
-kernel.pe: kernel.c
-	x86_64-w64-mingw32-gcc $(CFLAGS) -fPIE -e kmain -nostdlib -o $@ $<
-	cp $@ $(DISK_IMG_FOLDER)
-	cd $(DISK_IMG_FOLDER); \
-	./$(DISK_IMG_PGM) -ad $(KERNEL); 
+kernel.binelf: $(KERNEL_SRC)
+	$(ELFCC) -c $(KERNEL_CFLAGS) -o kernel.o $<
+	$(ELFLD) $(KERNEL_LDFLAGS) -Tkernel.ld --oformat binary -o $@ kernel.o 
+	$(ADD_KERNEL)
+
+kernel.binpe: $(KERNEL_SRC)
+	$(PECC) -c $(KERNEL_CFLAGS) -o kernel.o $<
+	$(PELD) $(KERNEL_LDFLAGS) -Tkernel.ld --image-base=0 -o kernel.obj kernel.o
+	objcopy -O binary kernel.obj $@
+	$(ADD_KERNEL)
 
 -include $(DEPENDS)
 
 clean:
-	rm -rf $(TARGET) *.efi *.o *.d *.bin *.elf *.pe
+	rm -rf $(EFI_APP) $(KERNEL) *.bin* *.d *.efi *.elf *.o *.obj *.pe
 

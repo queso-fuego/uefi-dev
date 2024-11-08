@@ -2,10 +2,13 @@
 #include "efi.h"
 #include "efi_lib.h"
 
+#include "ter_132n_psf_font.txt"
+
 // -----------------
 // Global macros
 // -----------------
 #define ARRAY_SIZE(x) (sizeof (x) / sizeof (x)[0])
+#define max(x, y) ((x) > (y) ? (x) : (y))
 
 // -----------------
 // Global constants
@@ -2390,12 +2393,92 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
     if (EFI_ERROR(status)) error(0, u"SetVirtualAddressMap()\r\n");
 }
 
+// ===================================================
+// Get a package list from the HII database
+// NOTE: This allocates memory with AllocatePool(),
+//   Caller should free returned address with e.g. 
+//   if (result) bs->FreePool(result);
+// TODO: Put in efi_lib.h
+// ===================================================
+EFI_HII_PACKAGE_LIST_HEADER *hii_database_package_list(UINT8 package_type) {
+    EFI_HII_PACKAGE_LIST_HEADER *pkg_list = NULL;   // Return variable
+
+    // Get HII databse protocol instance
+    EFI_HII_DATABASE_PROTOCOL *dbp = NULL;
+    EFI_GUID dbp_guid = EFI_HII_DATABASE_PROTOCOL_GUID;
+    EFI_STATUS status = EFI_SUCCESS;
+
+    status = bs->LocateProtocol(&dbp_guid, NULL, (VOID **)&dbp);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate HII Database Protocol!\r\n");
+        return pkg_list;
+    }
+
+    // Get size of buffer needed for list of handles for package lists
+    UINTN buf_len = 0;
+    EFI_HII_HANDLE handle_buf = NULL;   
+    status = dbp->ListPackageLists(dbp, package_type, NULL, &buf_len, &handle_buf); 
+    if (status != EFI_BUFFER_TOO_SMALL && EFI_ERROR(status)) {
+        error(status, u"Could not get size of list of handles for HII package lists for type %hhu.\r\n",
+              package_type);
+        return pkg_list;
+    }
+
+    // Allocate buffer for list of handles for package lists
+    status = bs->AllocatePool(EfiLoaderData, buf_len, (VOID **)&handle_buf);  
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not allocate buffer for handle list for package lists type %hhu.\r\n",
+              package_type);
+        return pkg_list;
+    }
+
+    // Get list of handles with package type into buffer
+    status = dbp->ListPackageLists(dbp, package_type, NULL, &buf_len, &handle_buf); 
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not get list of handles for HII package lists for type %hhu into buffer.\r\n",
+              package_type);
+        goto cleanup;
+    }
+
+    // Get size of buffer needed for package list on handle
+    UINTN buf_len2 = 0;
+    EFI_HII_HANDLE handle = handle_buf;    // Point to 1st handle in handle list    
+    status = dbp->ExportPackageLists(dbp, handle, &buf_len2, pkg_list);  
+    if (status != EFI_BUFFER_TOO_SMALL && EFI_ERROR(status)) {
+        error(status, u"Could not get size of 1st package list for type %hhu.\r\n",
+              package_type);
+        goto cleanup;
+    }
+
+    // Allocate buffer for package list to export (1st package list on 1st handle)
+    status = bs->AllocatePool(EfiLoaderData, buf_len2, (VOID **)&pkg_list);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not allocate buffer for package list of type %hhu.\r\n",
+              package_type);
+        goto cleanup;
+    }
+
+    // Export package list to buffer
+    status = dbp->ExportPackageLists(dbp, handle, &buf_len2, pkg_list); 
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not export package list of type %hhu into buffer.\r\n",
+              package_type);
+        goto cleanup;
+    }
+
+    // Free memory when done and return result
+    cleanup:
+    if (handle_buf) bs->FreePool(handle_buf);
+    return pkg_list;    // Caller needs to free this with bs->FreePool()
+}
+
 // ==========================================
 // Read a file from the basic data partition
 // ==========================================
 EFI_STATUS load_kernel(void) {
     VOID *file_buffer = NULL;
     VOID *disk_buffer = NULL;
+    EFI_HII_PACKAGE_LIST_HEADER *pkg_list = NULL;   
     EFI_STATUS status = EFI_SUCCESS;
 
     // Print file info for DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
@@ -2519,6 +2602,80 @@ EFI_STATUS load_kernel(void) {
     // Close Timer Event so that it does not continue to fire off
     bs->CloseEvent(timer_event);
 
+    // Set rest of kernel parameters
+    kparms.RuntimeServices = rs;
+    kparms.NumberOfTableEntries = st->NumberOfTableEntries;
+    kparms.ConfigurationTable = st->ConfigurationTable;
+
+    // Allocate buffer for kernel bitmap fonts
+    kparms.num_fonts = 2;
+    status = bs->AllocatePool(EfiLoaderData, 
+                              kparms.num_fonts * sizeof *kparms.fonts, 
+                              (VOID **)&kparms.fonts);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not allocate buffer for kernel bitmap font parms.\r\n");
+        goto cleanup;
+    }
+
+    // Get simple font info & glyphs from HII database for kernel to use as a bitmap font 
+    //   for printing
+    pkg_list = hii_database_package_list(EFI_HII_PACKAGE_SIMPLE_FONTS);    
+    if (pkg_list) {
+        // Fill in kernel parm font with narrow glyph info from EFI HII simple font (8x19)
+        EFI_HII_SIMPLE_FONT_PACKAGE_HDR *simple_font_hdr = 
+          (EFI_HII_SIMPLE_FONT_PACKAGE_HDR *)(pkg_list + 1);
+
+        // Fill out bitmap font info
+        kparms.fonts[0] = (Bitmap_Font){
+            .name = "efi_system_narrow_01",
+            .width = EFI_GLYPH_WIDTH,
+            .height = EFI_GLYPH_HEIGHT,
+            .num_glyphs = simple_font_hdr->NumberOfNarrowGlyphs,
+            .glyphs = NULL,
+            .left_col_first = false,    // Bits in memory are laid out right to left
+        };
+
+        // Allocate buffer for glyph data, try to have at least full ASCII + code page range
+        UINTN max_glyphs = max(256, simple_font_hdr->NumberOfNarrowGlyphs);
+        Bitmap_Font font = kparms.fonts[0];
+        UINTN glyph_size = ((font.width + 7) / 8) * font.height; 
+
+        // Allocate extra 8 bytes for bitmap mask printing in kernel
+        status = bs->AllocatePool(EfiLoaderData, 
+                                  (max_glyphs * glyph_size) + 8,    
+                                  (VOID **)&kparms.fonts[0].glyphs);
+        if (EFI_ERROR(status)) {
+            error(status, u"Could not allocate buffer for kernel parm font narrow glyphs bitmaps.\r\n");
+            goto cleanup;
+        }
+
+        // Copy narrow glyphs into buffer, start at lowest/first glyph to 0-init or skip others
+        memset(kparms.fonts[0].glyphs, 0, max_glyphs * glyph_size);
+
+        EFI_NARROW_GLYPH *narrow_glyphs = (EFI_NARROW_GLYPH *)(simple_font_hdr + 1);
+        CHAR16 lowest_glyph = narrow_glyphs[0].UnicodeWeight;
+
+        UINT8 *buf = kparms.fonts[0].glyphs + (lowest_glyph * glyph_size);
+        for (UINTN i = 0; i < simple_font_hdr->NumberOfNarrowGlyphs; i++) {
+            EFI_NARROW_GLYPH glyph = narrow_glyphs[i];
+            memcpy(buf + (i * glyph_size), glyph.GlyphCol1, glyph_size);
+        }
+    }
+
+    // Get "embedded" PSF file for another bitmap font to use
+    // Assuming psf font is #embed-ed or #include-ed from e.g. xxd -i and variables are 
+    //   defined for e.g.
+    //   "unsigned char ter_132n_psf[] = {};" and "unsigned int ter_132n_psf_len;"
+    PSF2_Header *psf2_hdr = (PSF2_Header *)ter_132n_psf;
+    kparms.fonts[1] = (Bitmap_Font){
+        .name            = "ter-132n.psf",
+        .width           = psf2_hdr->width,
+        .height          = psf2_hdr->height,
+        .left_col_first  = true,                   // Pixels in memory are stored left to right
+        .num_glyphs      = psf2_hdr->num_glyphs,
+        .glyphs          = (uint8_t *)(psf2_hdr+1),
+    };
+
     // Get Memory Map
     if (EFI_ERROR(get_memory_map(&kparms.mmap))) goto cleanup;
 
@@ -2536,11 +2693,6 @@ EFI_STATUS load_kernel(void) {
         error(0, u"Could not Exit Boot Services!\r\n");
         goto cleanup;
     }
-
-    // Set rest of kernel parameters
-    kparms.RuntimeServices = rs;
-    kparms.NumberOfTableEntries = st->NumberOfTableEntries;
-    kparms.ConfigurationTable = st->ConfigurationTable;
 
     // Set up new level 4 page table
     pml4 = mmap_allocate_pages(&kparms.mmap, 1);
@@ -2647,6 +2799,13 @@ EFI_STATUS load_kernel(void) {
     cleanup:
     bs->FreePool(file_buffer);  // Free memory allocated for ESP file
     bs->FreePool(disk_buffer);  // Free memory allocated for data partition file
+
+    if (pkg_list) bs->FreePool(pkg_list);   // Free memory for simple font package list
+
+    for (UINTN i = 0; i < kparms.num_fonts; i++)    // Free memory for kparms font glyphs
+        bs->FreePool(kparms.fonts[i].glyphs);
+
+    if (kparms.fonts) bs->FreePool(kparms.fonts);   // Free memory for kparms fonts array
 
     exit:
     printf(u"\r\nPress any key to go back...\r\n");

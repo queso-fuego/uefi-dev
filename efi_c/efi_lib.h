@@ -3,6 +3,7 @@
 //
 #pragma once
 
+#include <stdint.h>
 #include "efi.h"
 
 // ELF Header - x86_64
@@ -143,6 +144,17 @@ typedef struct {
     UINT32                desc_version;
 } Memory_Map_Info;
 
+// Bitmapped font info (assuming monospaced)
+typedef struct {
+    char     *name;             // Font name
+    uint32_t width;             // Glyph width in pixels
+    uint32_t height;            // Glyph height in pixels
+    uint32_t num_glyphs;        // Number of glyphs in array/font
+    uint8_t  *glyphs;           // Glyph data/array
+    bool     left_col_first;    // Are bits for glyphs stored in memory left->right 
+                                //   e.g. PSF font, or right->left e.g. terminus?
+} Bitmap_Font;
+
 // Example Kernel Parameters
 typedef struct {
     Memory_Map_Info                   mmap; 
@@ -150,10 +162,12 @@ typedef struct {
     EFI_RUNTIME_SERVICES              *RuntimeServices;
     UINTN                             NumberOfTableEntries;
     EFI_CONFIGURATION_TABLE           *ConfigurationTable;
+    UINTN                             num_fonts;
+    Bitmap_Font                       *fonts;
 } Kernel_Parms;
 
 // Kernel entry point typedef
-typedef void EFIAPI (*Entry_Point)(Kernel_Parms);
+typedef void EFIAPI (*Entry_Point)(Kernel_Parms *);
 
 // EFI Configuration Table GUIDs and string names
 typedef struct {
@@ -269,6 +283,20 @@ typedef struct {
     X86_64_Descriptor  user_data_32;        // Offset 0x40
     TSS_LDT_Descriptor tss;                 // Offset 0x48
 } GDT;
+
+// PSF Font types
+// Adapted from https://wiki.osdev.org/PC_Screen_Font
+#define PSF2_FONT_MAGIC 0x864ab572
+typedef struct {
+    uint32_t magic;             // Magic bytes to identify PSF file (PSF2_FONT_MAGIC)
+    uint32_t version;           // Zero 
+    uint32_t headersize;        // Offset of bitmaps in file, 32 
+    uint32_t flags;             // 0 if no unicode table
+    uint32_t num_glyphs;        // Number of glyphs 
+    uint32_t bytes_per_glyph;   // Size of each glyph 
+    uint32_t height;            // Height in pixels 
+    uint32_t width;             // Width in pixels 
+} PSF2_Header;
 
 // ====================================
 // memset for compiling with clang/gcc:
