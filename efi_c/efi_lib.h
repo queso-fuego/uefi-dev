@@ -1,10 +1,12 @@
 //
-// efi_lib.h: Helper definitions that aren't in efi.h or the UEFI Spec
+// efi_lib.h: EFI related helper definitions and functions, outside of the scope and definitions 
+//   in the UEFI specification or efi.h header.
 //
 #pragma once
 
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 #include "efi.h"
 
@@ -179,7 +181,6 @@ typedef struct {
     char16_t *string;
 } Efi_Guid_With_String;
 
-// Default 
 Efi_Guid_With_String config_table_guids_and_strings[] = {
     {EFI_ACPI_TABLE_GUID,   u"EFI_ACPI_TABLE_GUID"},
     {ACPI_TABLE_GUID,       u"ACPI_TABLE_GUID"},
@@ -315,7 +316,7 @@ EFI_SYSTEM_TABLE     *st = NULL;                // System Table
 
 EFI_HANDLE image = NULL;                        // Image handle
 
-INT32 text_rows = 0, text_cols = 0;
+INT32 text_rows = 0, text_cols = 0;             // Current text mode screen rows & columns
 
 // ======================
 // Set global variables
@@ -351,9 +352,7 @@ EFI_INPUT_KEY get_key(void) {
 // ================================
 VOID *memset(VOID *dst, UINT8 c, UINTN len) {
     UINT8 *p = dst;
-    for (UINTN i = 0; i < len; i++)
-        p[i] = c;
-
+    while (len--) *p++ = c;
     return dst;
 }
 
@@ -364,11 +363,8 @@ VOID *memset(VOID *dst, UINT8 c, UINTN len) {
 // Returns dst buffer
 // ================================
 VOID *memcpy(VOID *dst, VOID *src, UINTN len) {
-    UINT8 *p = dst;
-    UINT8 *q = src;
-    for (UINTN i = 0; i < len; i++)
-        p[i] = q[i];
-
+    UINT8 *p = dst, *q = src;
+    while (len--) *p++ = *q++;
     return dst;
 }
 
@@ -393,11 +389,7 @@ INTN memcmp(VOID *m1, VOID *m2, UINTN len) {
 // =====================================================================
 UINTN strlen(char *s) {
     UINTN len = 0;
-    while (*s) {
-        len++;
-        s++;
-    }
-
+    while (*s++) len++;
     return len;
 }
 
@@ -413,9 +405,8 @@ char *strstr(char *haystack, char *needle) {
 
     char *p = haystack;
     while (*p) {
-        if (*p == *needle) {
-            if (!memcmp(p, needle, strlen(needle))) return p;
-        }
+        if (*p == *needle && !memcmp(p, needle, strlen(needle))) 
+            return p;
         p++;
     }
 
@@ -440,7 +431,7 @@ BOOLEAN isdigit_c16(CHAR16 c) {
 
 // =====================================================================
 // CHAR16 isxdigit:
-// Returns: true/1 if char c >= 0 and <= 9     or 
+// Returns: true/1 if char c >= 0   and <= 9   or 
 //                           >= 'a' and <= 'f' or
 //                           >= 'A' and <= 'F'
 // =====================================================================
@@ -458,10 +449,8 @@ BOOLEAN isxdigit_c16(CHAR16 c) {
 // =============================================
 INTN atoi(char *s) {
     INTN result = 0;
-    while (isdigit(*s)) {
-        result = (result * 10) + (*s - '0');
-        s++;
-    }
+    while (isdigit(*s)) 
+        result = (result * 10) + (*s++ - '0');
 
     return result;
 }
@@ -525,13 +514,34 @@ CHAR16 *strrchr_u16(CHAR16 *str, CHAR16 c) {
 CHAR16 *strcat_u16(CHAR16 *dst, CHAR16 *src) {
     CHAR16 *s = dst;
 
-    while (*s) s++; // Go until null terminator
+    while (*s) s++;             // Go until null terminator
 
-    while (*src) *s++ = *src++;
+    while (*src) *s++ = *src++; // Copy src to dst at null position
 
-    *s = u'\0'; // I guess this isn't normal libc behavior? But seems better to null terminate
+    *s = u'\0';                 // Null terminate new string
 
     return dst; 
+}
+
+// ===================================================================
+// Connect all controllers to all handles,
+// Code adapted from UEFI Spec 2.10 Errata A section 7.3.12 Examples
+// ===================================================================
+VOID connect_all_controllers(VOID) {
+    // Retrieve the list of all handles from the handle database
+    EFI_STATUS Status;
+    UINTN HandleCount = 0;
+    EFI_HANDLE *HandleBuffer = NULL;
+    UINTN HandleIndex = 0;
+    Status = bs->LocateHandleBuffer(AllHandles, NULL, NULL, &HandleCount, &HandleBuffer);
+    if (EFI_ERROR(Status) || !HandleBuffer) return;
+
+    // Connect all controllers found on all handles
+    for (HandleIndex = 0; HandleIndex < HandleCount; HandleIndex++) 
+        Status = bs->ConnectController(HandleBuffer[HandleIndex], NULL, NULL, TRUE);
+
+    // Free handle buffer when done
+    bs->FreePool(HandleBuffer);
 }
 
 // ===========================================
@@ -609,9 +619,6 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
     CHAR16 buf[1024];   // Format string buffer for % strings
     UINTN buf_idx = 0;
     
-    // Initialize buffers
-    charstr[0] = u'\0', charstr[1] = u'\0';
-
     // Print formatted string values
     for (UINTN i = 0; fmt[i] != u'\0'; i++) {
         if (fmt[i] == u'%') {
@@ -905,6 +912,38 @@ bool error(char *file, int line, const char *func, EFI_STATUS status, CHAR16 *fm
 }
 #define error(...) error(__FILE__, __LINE__, __func__, __VA_ARGS__)
 
+// ================================================
+// Get a number from the user and print to screen
+// ================================================
+BOOLEAN get_num(UINTN *number, UINT8 base) {
+    EFI_INPUT_KEY key = {0};
+
+    if (!number) return false;  // Passed in NULL pointer
+
+    *number = 0;
+    do {
+        key = get_key();
+        if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
+
+        if (isdigit_c16(key.UnicodeChar)) {
+            *number = (*number * base) + (key.UnicodeChar - u'0');
+            printf(u"%c", key.UnicodeChar);
+
+        } else if (base == 16) {
+            if (key.UnicodeChar >= u'a' && key.UnicodeChar <= u'f') {
+                *number = (*number * base) + (key.UnicodeChar - u'a' + 10);
+                printf(u"%c", key.UnicodeChar);
+
+            } else if (key.UnicodeChar >= u'A' && key.UnicodeChar <= u'F') {
+                *number = (*number * base) + (key.UnicodeChar - u'A' + 10);
+                printf(u"%c", key.UnicodeChar);
+            }
+        }
+    } while (key.UnicodeChar != u'\r');
+
+    return true;
+}
+
 // ====================
 // Print a GUID value
 // ====================
@@ -916,9 +955,9 @@ void print_guid(EFI_GUID guid) {
             (UINTN)p[14], (UINTN)p[15]);
 }
 
-// =========================
-// Print ACPI table header
-// =========================
+// ============================
+// Print an ACPI table header
+// ============================
 void print_acpi_table_header(ACPI_TABLE_HEADER header) { 
     printf(u"Signature: %.4hhs\r\n"
            u"Length: %u\r\n"
@@ -1004,8 +1043,8 @@ void print_pe_info(VOID *pe_buffer) {
     UINT32 pe_sig_pos = *(UINT32 *)((UINT8 *)pe_buffer + pe_sig_offset);
     UINT8 *pe_sig = (UINT8 *)pe_buffer + pe_sig_pos;
 
-    printf(u"Signature: [%x][%x][%x][%x] ",
-           (UINTN)pe_sig[0], (UINTN)pe_sig[1], (UINTN)pe_sig[2], (UINTN)pe_sig[3]);
+    printf(u"Signature: [%hhx][%hhx][%hhx][%hhx] ",
+           pe_sig[0], pe_sig[1], pe_sig[2], pe_sig[3]);
 
     // COFF header
     PE_Coff_File_Header_64 *coff_hdr = (PE_Coff_File_Header_64 *)(pe_sig + 4);
@@ -1180,7 +1219,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
 // =================================================================
 // Read a file from a given disk (from input media ID), into an
 //   output buffer. 
-
+//
 // Returns: non-null pointer to allocated buffer with data, 
 //  allocated with Boot Services AllocatePool(), or NULL if not 
 //  found or error. If executable input parameter is true, then 
@@ -1259,11 +1298,10 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
 
     // Allocate buffer for data
     UINTN pages_needed = (data_size + (PAGE_SIZE-1)) / PAGE_SIZE;
-    if (executable) 
-        status = bs->AllocatePages(AllocateAnyPages, EfiLoaderCode, pages_needed, &buffer);
-    else 
-        status = bs->AllocatePages(AllocateAnyPages, EfiLoaderData, pages_needed, &buffer);
-
+    status = bs->AllocatePages(AllocateAnyPages, 
+                               executable ? EfiLoaderCode : EfiLoaderData, 
+                               pages_needed, 
+                               &buffer);
     if (EFI_ERROR(status)) {
         error(status, u"Could not Allocate buffer for disk data.\r\n");
         bs->CloseProtocol(handle_buffer[i],
@@ -1275,9 +1313,8 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
 
     // Use Disk IO Read to read into allocated buffer
     status = diop->ReadDisk(diop, disk_mediaID, disk_lba * biop->Media->BlockSize, data_size, (VOID *)buffer);
-    if (EFI_ERROR(status)) {
+    if (EFI_ERROR(status)) 
         error(status, u"Could not read Disk LBAs into buffer.\r\n");
-    }
 
     // Close disk IO protocol when done
     bs->CloseProtocol(handle_buffer[i],
@@ -1286,14 +1323,26 @@ EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size,
                       NULL);
 
     cleanup:
-    // Close open protocol when done
+    // Close open block io protocol when done
     bs->CloseProtocol(handle_buffer[i],
                       &bio_guid,
                       image,
                       NULL);
-
     return buffer;
 }
+
+// TODO: Make helper function to read disk partition file to buffer,
+//   similar to VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size). 
+//   Get info from file \\EFI\\BOOT\\DATAFLS.INF, call 
+//     EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, 
+//                                                   UINTN data_size, 
+//                                                   UINT32 disk_mediaID, 
+//                                                   bool executable)
+//     then return the filled buffer.
+//
+//   Can use this function in load_kernel() to abstract finding kernel file
+//     info and loading it into a buffer, and for loading the PSF font 
+//     instead of embedding it directly in source files, if wanted.
 
 // ==================================================
 // Get first package list found in the HII database

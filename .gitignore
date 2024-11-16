@@ -7,3 +7,5 @@
 *.obj
 *.elf
 *.pe
+*.binelf
+*.binpe

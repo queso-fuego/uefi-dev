@@ -1,4 +1,5 @@
 #include <stdarg.h>
+
 #include "efi.h"
 #include "efi_lib.h"
 
@@ -14,10 +15,6 @@
 // -----------------
 // Global constants
 // -----------------
-#define SCANCODE_UP_ARROW   0x1
-#define SCANCODE_DOWN_ARROW 0x2
-#define SCANCODE_ESC        0x17
-
 #define DEFAULT_FG_COLOR EFI_YELLOW
 #define DEFAULT_BG_COLOR EFI_BLUE
 
@@ -54,7 +51,7 @@ typedef struct {
 // -----------------
 // Global variables
 // -----------------
-// External global vars are defined in efi_lib.h
+// These external global vars are defined in efi_lib.h
 extern EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cout;   // Console output
 extern EFI_SIMPLE_TEXT_INPUT_PROTOCOL  *cin;    // Console input
 extern EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *cerr;   // Console output - stderr
@@ -84,56 +81,6 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 
 Page_Table *pml4 = NULL;   // Top level 4 page table for x86_64 long mode paging
 
-// ==================================================
-// Get an integer number from the user with a get_key() loop
-//   and print to screen
-// ==================================================
-BOOLEAN get_int(INTN *number) {
-    EFI_INPUT_KEY key = {0};
-
-    if (!number) return false;  // Passed in NULL pointer
-
-    *number = 0;
-    do {
-        key = get_key();
-        if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
-        if (isdigit_c16(key.UnicodeChar)) {
-            *number = (*number * 10) + (key.UnicodeChar - u'0');
-            printf(u"%c", key.UnicodeChar);
-        }
-    } while (key.UnicodeChar != u'\r');
-
-    return true;
-}
-
-// ==================================================
-// Get a hexadecimal number from the user with a get_key() loop
-//   and print to screen
-// ==================================================
-BOOLEAN get_hex(UINTN *number) {
-    EFI_INPUT_KEY key = {0};
-
-    if (!number) return false;  // Passed in NULL pointer
-
-    *number = 0;
-    do {
-        key = get_key();
-        if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
-        if (isdigit_c16(key.UnicodeChar)) {
-            *number = (*number * 16) + (key.UnicodeChar - u'0');
-            printf(u"%c", key.UnicodeChar);
-        } else if (key.UnicodeChar >= u'a' && key.UnicodeChar <= u'f') {
-            *number = (*number * 16) + (key.UnicodeChar - u'a' + 10);
-            printf(u"%c", key.UnicodeChar);
-        } else if (key.UnicodeChar >= u'A' && key.UnicodeChar <= u'F') {
-            *number = (*number * 16) + (key.UnicodeChar - u'A' + 10);
-            printf(u"%c", key.UnicodeChar);
-        }
-    } while (key.UnicodeChar != u'\r');
-
-    return true;
-}
-
 // ====================
 // Set Text Mode
 // ====================
@@ -146,20 +93,18 @@ EFI_STATUS set_text_mode(void) {
 
     Text_Mode_Info text_modes[20];
 
-    UINTN mode_index = 0;   // Current mode within entire menu of GOP mode choices;
+    UINTN mode_index = 0;   // Current mode within entire menu of text mode choices 
 
     // Overall screen loop
     while (true) {
         cout->ClearScreen(cout);
 
-        // Write String
-        cout->OutputString(cout, u"Text mode information:\r\n");
+        // Get current text mode info
         UINTN max_cols = 0, max_rows = 0;
-
-        // Get current text mode's column and row counts
         cout->QueryMode(cout, cout->Mode->Mode, &max_cols, &max_rows);
 
-        printf(u"Max Mode: %d\r\n"
+        printf(u"Text mode information:\r\n"
+               u"Max Mode: %d\r\n"
                u"Current Mode: %d\r\n"
                u"Attribute: %x\r\n" 
                u"CursorColumn: %d\r\n"
@@ -176,7 +121,7 @@ EFI_STATUS set_text_mode(void) {
                max_cols,
                max_rows);
 
-        cout->OutputString(cout, u"Available text modes:\r\n");
+        printf(u"Available text modes:\r\n");
 
         UINTN menu_top = cout->Mode->CursorRow, menu_bottom = max_rows;
 
@@ -354,10 +299,8 @@ EFI_STATUS set_graphics_mode(void) {
     while (true) {
         cout->ClearScreen(cout);
 
-        // Write String
-        printf(u"Graphics mode information:\r\n");
-
         // Get current GOP mode information
+        printf(u"Graphics mode information:\r\n");
         status = gop->QueryMode(gop, 
                                 gop->Mode->Mode, 
                                 &mode_info_size, 
@@ -368,7 +311,6 @@ EFI_STATUS set_graphics_mode(void) {
             return status;
         }
 
-        // Print info
         printf(u"Max Mode: %d\r\n"
                u"Current Mode: %d\r\n"
                u"WidthxHeight: %ux%u\r\n"
@@ -602,9 +544,8 @@ EFI_STATUS test_mouse(void) {
 
     // Use LocateHandleBuffer() to find all SPPs 
     status = bs->LocateHandleBuffer(ByProtocol, &spp_guid, NULL, &num_handles, &handle_buffer);
-    if (EFI_ERROR(status)) {
+    if (EFI_ERROR(status)) 
         error(status, u"Could not locate Simple Pointer Protocol handle buffer.\r\n");
-    }
 
     cout->ClearScreen(cout);
 
@@ -1303,7 +1244,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
         error(status, u"Could not open Loaded Image Protocol\r\n");
-        return status;
+        goto done;
     }
 
     // Get Block IO protocol for loaded image's device handle
@@ -1315,7 +1256,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
                               EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
     if (EFI_ERROR(status)) {
         error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
-        return status;
+        goto done;
     }
 
     *mediaID = biop->Media->MediaId;  // Media ID for this running disk image itself
@@ -1331,7 +1272,8 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
                       image,
                       NULL);
 
-    return EFI_SUCCESS;
+    done:
+    return status;
 }
 
 // ==========================================================
@@ -1339,8 +1281,6 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
 //   entry point for the loaded ELF program
 // ==========================================================
 VOID *load_elf(VOID *elf_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_size) {
-    print_elf_info(elf_buffer); // Print ELF header and loadable program header information
-
     ELF_Header_64 *ehdr = elf_buffer;
 
     // Only allow PIE ELF files
@@ -1424,8 +1364,6 @@ VOID *load_elf(VOID *elf_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_
 //   entry point for the loaded PE program
 // ==========================================================
 VOID *load_pe(VOID *pe_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_size) {
-    print_pe_info(pe_buffer); // Print PE header and loadable section header information
-
     // Get COFF header
     UINT8 pe_sig_offset = 0x3C; // From PE file format
     UINT32 pe_sig_pos = *(UINT32 *)((UINT8 *)pe_buffer + pe_sig_offset);
@@ -1718,15 +1656,28 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
 // Read a file from the basic data partition
 // ==========================================
 EFI_STATUS load_kernel(void) {
+    // TODO: Make helper function to load a data partition file to a buffer,
+    //   from getting info in \\EFI\\BOOT\\DATAFLS.INF,
+    //   and use that to load the kernel binary to replace logic in this
+    //   function for getting DATAFLS.INF info and calling 
+    //   read_disk_lbas_to_buffer().
     VOID *file_buffer = NULL;
     VOID *disk_buffer = NULL;
     EFI_HII_PACKAGE_LIST_HEADER *pkg_list = NULL;   
     EFI_STATUS status = EFI_SUCCESS;
 
+    cout->ClearScreen(cout);
+
+    // Get media ID (disk number for Block IO protocol Media) for this running disk image
+    UINT32 image_mediaID = 0;
+    status = get_disk_image_mediaID(&image_mediaID);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not find or get MediaID value for disk image\r\n");
+        goto exit;
+    }
+
     // Print file info for DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
     CHAR16 *file_name = u"\\EFI\\BOOT\\DATAFLS.INF";
-
-    cout->ClearScreen(cout);
 
     UINTN buf_size = 0;
     file_buffer = read_esp_file_to_buffer(file_name, &buf_size);
@@ -1765,15 +1716,6 @@ EFI_STATUS load_kernel(void) {
 
     printf(u"File Size: %u, Disk LBA: %u\r\n", file_size, disk_lba);
 
-    // Get media ID (disk number for Block IO protocol Media) for this running disk image
-    UINT32 image_mediaID = 0;
-    status = get_disk_image_mediaID(&image_mediaID);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not find or get MediaID value for disk image\r\n");
-        bs->FreePool(file_buffer);  // Free memory allocated for ESP file
-        goto exit;
-    }
-
     // Read disk lbas for file into buffer
     disk_buffer = (VOID *)read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID, true);
     if (!disk_buffer) {
@@ -1782,40 +1724,28 @@ EFI_STATUS load_kernel(void) {
         goto exit;
     }
 
-    // Get GOP info for kernel parms
-    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
-
-    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not locate GOP! :(\r\n");
-        return status;
-    }
-
-    // Initialize Kernel Parameters
-    Kernel_Parms kparms = {0};  // Defined in efi_lib.h
-
-    kparms.gop_mode = *gop->Mode;
-    Entry_Point entry_point = NULL;
-
     // Load Kernel File depending on format (initial header bytes)
     UINT8 *hdr = disk_buffer;
-
-    printf(u"Header bytes: [%x][%x][%x][%x]\r\n", 
-           (UINTN)hdr[0], (UINTN)hdr[1], (UINTN)hdr[2], (UINTN)hdr[3]);
+    printf(u"Header bytes: [%hhx][%hhx][%hhx][%hhx]\r\n", 
+           hdr[0], hdr[1], hdr[2], hdr[3]);
 
     EFI_PHYSICAL_ADDRESS kernel_buffer = 0;
     UINTN kernel_size = 0;
 
+    // Load kernel binary and get the entry point
     // Get around compiler warning about function vs void pointer
     //   with a cast to (void **)
+    Entry_Point entry_point = NULL;
+
     printf(u"File Format: ");
     if (!memcmp(hdr, (UINT8[4]){0x7F, 'E', 'L', 'F'}, 4)) {
         printf(u"ELF\r\n");
+        print_elf_info(disk_buffer); // Print ELF header and loadable program header information
         *(void **)&entry_point = load_elf(disk_buffer, &kernel_buffer, &kernel_size);   
 
     } else if (!memcmp(hdr, (UINT8[2]){'M', 'Z'}, 2)) {
         printf(u"PE\r\n");
+        print_pe_info(disk_buffer); // Print PE header and loadable section header information
         *(void **)&entry_point = load_pe(disk_buffer, &kernel_buffer, &kernel_size); 
 
     } else {
@@ -1847,10 +1777,28 @@ EFI_STATUS load_kernel(void) {
     // Close Timer Event so that it does not continue to fire off
     bs->CloseEvent(timer_event);
 
-    // Set rest of kernel parameters
-    kparms.RuntimeServices = rs;
-    kparms.NumberOfTableEntries = st->NumberOfTableEntries;
-    kparms.ConfigurationTable = st->ConfigurationTable;
+    // Initialize Kernel Parameters
+    // TODO: Use largest found WxH GOP mode instead of default mode on 
+    //   boot or current user chosen mode.
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+
+    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate GOP! :(\r\n");
+        goto cleanup;
+    }
+
+    // Defined in efi_lib.h
+    Kernel_Parms kparms = {     
+        .mmap                 = {0},
+        .gop_mode             = *gop->Mode,
+        .RuntimeServices      = rs,
+        .NumberOfTableEntries = st->NumberOfTableEntries,
+        .ConfigurationTable   = st->ConfigurationTable,
+        .num_fonts            = 0,
+        .fonts                = NULL,
+    };
 
     // Allocate buffer for kernel bitmap fonts
     kparms.num_fonts = 2;
@@ -2031,14 +1979,11 @@ EFI_STATUS load_kernel(void) {
 
         // Call new entry point in higher memory
         "callq *%[entry]\n" // First parameter is kparms_ptr in RCX in input constraints below, for MS ABI
-    :
-    :   [pml4]"r"(pml4), [gdt]"m"(gdtr), [tss]"r"((UINT16)0x48),
+      :
+      : [pml4]"r"(pml4), [gdt]"m"(gdtr), [tss]"r"((UINT16)0x48),
         [stack]"gm"((UINTN)kernel_stack + (STACK_PAGES * PAGE_SIZE)),    // Top of newly allocated stack
         [entry]"r"(higher_entry_point), "c"(kparms_ptr)
-    : "rax", "memory");
-
-    // Should not return to this point!
-    __builtin_unreachable();
+      : "rax", "memory");
 
     // Final cleanup
     cleanup:
@@ -2047,10 +1992,13 @@ EFI_STATUS load_kernel(void) {
 
     if (pkg_list) bs->FreePool(pkg_list);   // Free memory for simple font package list
 
-    for (UINTN i = 0; i < kparms.num_fonts; i++)    // Free memory for kparms font glyphs
-        bs->FreePool(kparms.fonts[i].glyphs);
+    if (kparms.fonts) {
+        // Free memory for kparms font glyphs
+        for (UINTN i = 0; i < kparms.num_fonts; i++)    
+            bs->FreePool(kparms.fonts[i].glyphs);
 
-    if (kparms.fonts) bs->FreePool(kparms.fonts);   // Free memory for kparms fonts array
+        bs->FreePool(kparms.fonts);   // Free memory for kparms fonts array
+    }
 
     exit:
     printf(u"\r\nPress any key to go back...\r\n");
@@ -2143,8 +2091,12 @@ EFI_STATUS print_config_tables(void) {
         printf(u"(%s)\r\n\r\n", 
                found ? config_table_guids_and_strings[j].string : u"Unknown GUID Value");
 
-        // Pause every so often
-        if (i > 0 && i % 6 == 0) get_key();
+        // Pause at bottom of screen
+        if (cout->Mode->CursorRow >= text_rows-2) {
+            printf(u"Press any key to continue...\r\n");
+            get_key();
+            cout->ClearScreen(cout);
+        }
     }
 
     printf(u"\r\nPress any key to go back...\r\n");
@@ -2165,19 +2117,19 @@ EFI_STATUS print_acpi_tables(void) {
     EFI_GUID acpi_guid = EFI_ACPI_TABLE_GUID;
     VOID *rsdp_ptr = get_config_table_by_guid(acpi_guid);
     bool acpi_20 = false;
-    if (!rsdp_ptr) {
+    if (rsdp_ptr) {
+        printf(u"ACPI 2.0 Table found at %#x\r\n", rsdp_ptr);
+        acpi_20 = true;
+    } else {
         // Check for ACPI 1.0 table as fallback
         acpi_guid = (EFI_GUID)ACPI_TABLE_GUID;
         rsdp_ptr = get_config_table_by_guid(acpi_guid);
-        if (!rsdp_ptr) {
+        if (rsdp_ptr) {
+            printf(u"ACPI 1.0 Table found at %#x\r\n", rsdp_ptr);
+        } else {
             error(0, u"Could not find ACPI configuration table\r\n");
             return 1;
-        } else {
-            printf(u"ACPI 1.0 Table found at %#x\r\n", rsdp_ptr);
         }
-    } else {
-        printf(u"ACPI 2.0 Table found at %#x\r\n", rsdp_ptr);
-        acpi_20 = true;
     }
 
     // Print RSDP
@@ -2227,7 +2179,11 @@ EFI_STATUS print_acpi_tables(void) {
             ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)entry[i];
             printf(u"%.4hhs\r\n", &table_header.signature[0]);
 
-            if (cout->Mode->CursorRow >= text_rows-2) get_key();
+            if (cout->Mode->CursorRow >= text_rows-2) {
+                printf(u"Press any key to continue...\r\n");
+                get_key();
+                cout->ClearScreen(cout);
+            }
         }
 
         printf(u"\r\nPress any key to print next table...\r\n");
@@ -2267,7 +2223,11 @@ EFI_STATUS print_acpi_tables(void) {
             ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)(UINTN)entry[i];
             printf(u"%.4hhs\r\n", &table_header.signature[0]);
 
-            if (cout->Mode->CursorRow >= text_rows-2) get_key();
+            if (cout->Mode->CursorRow >= text_rows-2) {
+                printf(u"Press any key to continue...\r\n");
+                get_key();
+                cout->ClearScreen(cout);
+            }
         }
 
         printf(u"\r\nPress any key to print next table...\r\n");
@@ -2310,7 +2270,7 @@ EFI_STATUS print_efi_global_variables(void) {
     var_name_size = 2;
     status = bs->AllocatePool(EfiLoaderData, var_name_size, (VOID **)&var_name_buf);
     if (EFI_ERROR(status)) {
-        error(status, u"Could not allocate 2 bytes...\r\n");
+        error(status, u"Could not allocate 2 bytes?!\r\n");
         return status;
     }
 
@@ -2468,7 +2428,7 @@ EFI_STATUS change_boot_variables(void) {
                 }
 
                 if (isxdigit_c16(var_name_buf[4]) && var_name_size == 18) {  
-                    // Boot#### load option - Name size is 8 CHAR16 chars * 2 bytes + CHAR16 null byte
+                    // Boot#### load option: Name size = 8 CHAR16 chars * 2 bytes + CHAR16 null bytes
                     EFI_LOAD_OPTION *load_option = (EFI_LOAD_OPTION *)data;
                     CHAR16 *description = (CHAR16 *)((UINT8 *)data + sizeof(UINT32) + sizeof(UINT16));
                     printf(u"%s\r\n", description);    
@@ -2525,7 +2485,7 @@ EFI_STATUS change_boot_variables(void) {
             UINT16 num_options = 0;
             for (UINTN i = 0; i < MAX_BOOT_OPTIONS; i++) {
                 printf(u"\r\nBoot Option %u (0000-FFFF): ", i+1);
-                if (!get_hex(&new_option)) break;    // Stop processing
+                if (!get_num(&new_option, 16)) break;    // Stop processing
                 option_array[num_options++] = new_option; 
             }
 
@@ -2542,7 +2502,7 @@ EFI_STATUS change_boot_variables(void) {
             // Change BootNext value - set new UINT16
             printf(u"\r\nBootNext value (0000-FFFF): ");
             UINTN value = 0;
-            if (get_hex(&value)) {
+            if (get_num(&value, 16)) {
                 EFI_GUID guid = EFI_GLOBAL_VARIABLE_GUID;
                 UINT32 attr = EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS |
                               EFI_VARIABLE_RUNTIME_ACCESS;
@@ -2667,8 +2627,8 @@ EFI_STATUS write_to_another_disk(void) {
 
     // Take in a number from the user for the media to write the disk image to
     printf(u"Input Media ID number to write to and press enter: ");
-    INTN chosen_media = 0;
-    get_int(&chosen_media);
+    UINTN chosen_media = 0;
+    get_num(&chosen_media, 10);
     printf(u"\r\n");
 
     // Get Block IO for chosen disk media
@@ -2806,21 +2766,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     // Connect all controllers found for all handles, to hopefully fix
     //   any bugs related to not initializing device drivers from firmware
-    // * Code adapted from UEFI Spec 2.10 Errata A section 7.3.12 Examples
-    //
-    // Retrieve the list of all handles from the handle database
-    EFI_STATUS Status;
-    UINTN HandleCount = 0;
-    EFI_HANDLE *HandleBuffer = NULL;
-    UINTN HandleIndex = 0;
-    Status = bs->LocateHandleBuffer(AllHandles, NULL, NULL, &HandleCount, &HandleBuffer);
-    if (!EFI_ERROR(Status)) {
-        // Connect all controllers found on all handles
-        for (HandleIndex = 0; HandleIndex < HandleCount; HandleIndex++) 
-            Status = bs->ConnectController(HandleBuffer[HandleIndex], NULL, NULL, TRUE);
-
-        bs->FreePool(HandleBuffer);
-    }
+    connect_all_controllers();
 
     // Timer function context will be the text mode screen bounds
     typedef struct {
@@ -2839,14 +2785,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         UINTN cols = 0, rows = 0;
         cout->QueryMode(cout, cout->Mode->Mode, &cols, &rows);
 
-        // Set global rows/cols values
+        // Set global text rows/cols values
         text_rows = rows; 
         text_cols = cols;
 
-        Timer_Context context = {
-            .rows = rows,
-            .cols = cols,
-        };
+        Timer_Context context = { .rows = rows, .cols = cols };
 
         // Close Timer Event for cleanup
         bs->CloseEvent(timer_event);

@@ -1,5 +1,7 @@
 // kernel.c: Sample "kernel" file for testing
 #include <stdint.h>
+#include <stdnoreturn.h>
+
 #include "efi.h"
 #include "efi_lib.h"
 
@@ -14,7 +16,7 @@ enum {
     COLOR_MAX,
 } COLOR_NAMES;
 
-// All colors are assumed ARGB8888
+// All colors are assumed 0xARGB 8888
 const uint32_t colors[COLOR_MAX] = {
     [LIGHT_GRAY] = 0xFFDDDDDD, 
     [RED]        = 0xFFCC2222, 
@@ -35,9 +37,10 @@ void print_string(char *string, Bitmap_Font *font);
 // ==============
 // MAIN
 // ==============
-__attribute__((section(".kernel"), aligned(0x1000))) void EFIAPI kmain(Kernel_Parms *kargs) {
+__attribute__((section(".kernel"), aligned(0x1000))) 
+noreturn void EFIAPI kmain(Kernel_Parms *kargs) {
     // Grab Framebuffer/GOP info
-    fb = (UINT32 *)kargs->gop_mode.FrameBufferBase;  // BGRA8888
+    fb = (UINT32 *)kargs->gop_mode.FrameBufferBase;  
     xres = kargs->gop_mode.Info->PixelsPerScanLine;
     yres = kargs->gop_mode.Info->VerticalResolution;
 
@@ -56,16 +59,6 @@ __attribute__((section(".kernel"), aligned(0x1000))) void EFIAPI kmain(Kernel_Pa
     print_string(font1->name, font1);
     print_string("\r\nFont 2 Name: ", font2);
     print_string(font2->name, font2);
-
-    //print_string("\r\nTest long wrapping line: ", font);
-    //for (uint64_t i = 0; i < 200; i++)
-    //  print_string("@", font);
-
-    //const uint32_t char_lines = yres / font->height;
-    //y = (char_lines - 1) * font->height; // Last character line on screen    
-    //print_string("\rTest scrolling up 1+ lines:", font);                          
-    //for (uint64_t i = 0; i < char_lines-1; i++)
-    //    print_string("\r\n", font);
 
     // Test runtime services by waiting a few seconds and then shutting down
     EFI_TIME old_time = {0}, new_time = {0};
@@ -89,7 +82,7 @@ __attribute__((section(".kernel"), aligned(0x1000))) void EFIAPI kmain(Kernel_Pa
     while (true) __asm__ __volatile__ ("cli; hlt");
 
     // Should not return after shutting down
-    __builtin_unreachable();
+    //__builtin_unreachable();
 }
 
 // ======================================================================

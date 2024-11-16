@@ -9,7 +9,6 @@
 #pragma once
 
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h> // NULL
 
 // UEFI Spec 2.10 section 2.4
@@ -64,6 +63,11 @@ typedef UINTN EFI_TPL;
 typedef UINT64 EFI_PHYSICAL_ADDRESS;
 typedef UINT64 EFI_VIRTUAL_ADDRESS;
 
+// Scancodes for SIMPLE_TEXT_INPUT_PROTOCOL & EX protocol; 
+//  UEFI Spec 2.10A Appendix B.1
+#define SCANCODE_UP_ARROW   0x1
+#define SCANCODE_DOWN_ARROW 0x2
+#define SCANCODE_ESC        0x17
 
 // -----------------------------------
 // Misc. EFI GUIDs
@@ -1502,7 +1506,7 @@ typedef struct {
 // HII PACKAGE LIST HEADER: UEFI Spec 2.10A section 33.3.1.2
 typedef struct {
     EFI_GUID PackageListGuid;
-    UINT32   PackagLength;
+    UINT32   PackageLength;
 } EFI_HII_PACKAGE_LIST_HEADER;
 
 // HII SIMPLE FONT PACKAGE HEADER: UEFI Spec 2.10A section 33.3.2
