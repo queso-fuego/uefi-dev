@@ -79,7 +79,9 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_buffer[] = {
 // Buffer to save Framebuffer data at cursor position
 EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
 
-Page_Table *pml4 = NULL;   // Top level 4 page table for x86_64 long mode paging
+Page_Table *pml4 = NULL;        // Top level 4 page table for x86_64 long mode paging
+
+bool autoload_kernel = false;   // Autoload kernel instead of main menu?
 
 // ====================
 // Set Text Mode
@@ -1666,6 +1668,17 @@ EFI_STATUS load_kernel(void) {
     EFI_HII_PACKAGE_LIST_HEADER *pkg_list = NULL;   
     EFI_STATUS status = EFI_SUCCESS;
 
+    // Defined in efi_lib.h
+    Kernel_Parms kparms = {     
+        .mmap                 = {0},
+        .gop_mode             = {0},
+        .RuntimeServices      = rs,
+        .NumberOfTableEntries = st->NumberOfTableEntries,
+        .ConfigurationTable   = st->ConfigurationTable,
+        .num_fonts            = 0,
+        .fonts                = NULL,
+    };
+
     cout->ClearScreen(cout);
 
     // Get media ID (disk number for Block IO protocol Media) for this running disk image
@@ -1673,17 +1686,16 @@ EFI_STATUS load_kernel(void) {
     status = get_disk_image_mediaID(&image_mediaID);
     if (EFI_ERROR(status)) {
         error(status, u"Could not find or get MediaID value for disk image\r\n");
-        goto exit;
+        goto cleanup;
     }
 
     // Print file info for DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
     CHAR16 *file_name = u"\\EFI\\BOOT\\DATAFLS.INF";
-
     UINTN buf_size = 0;
     file_buffer = read_esp_file_to_buffer(file_name, &buf_size);
     if (!file_buffer) {
         error(0, u"Could not find or read file '%s' to buffer\r\n", file_name);
-        goto exit;
+        goto cleanup;
     }
 
     // Parse data from DATAFLS.INF file to get disk LBA and file size
@@ -1721,7 +1733,7 @@ EFI_STATUS load_kernel(void) {
     if (!disk_buffer) {
         error(0, u"Could not find or read data partition file to buffer\r\n");
         bs->FreePool(file_buffer);  // Free memory allocated for ESP file
-        goto exit;
+        goto cleanup;
     }
 
     // Load Kernel File depending on format (initial header bytes)
@@ -1771,8 +1783,10 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;     
     }
 
-    printf(u"\r\nPress any key to load kernel...\r\n");
-    get_key();
+    if (!autoload_kernel) {
+        printf(u"\r\nPress any key to load kernel...\r\n");
+        get_key();
+    }
 
     // Close Timer Event so that it does not continue to fire off
     bs->CloseEvent(timer_event);
@@ -1789,16 +1803,7 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;
     }
 
-    // Defined in efi_lib.h
-    Kernel_Parms kparms = {     
-        .mmap                 = {0},
-        .gop_mode             = *gop->Mode,
-        .RuntimeServices      = rs,
-        .NumberOfTableEntries = st->NumberOfTableEntries,
-        .ConfigurationTable   = st->ConfigurationTable,
-        .num_fonts            = 0,
-        .fonts                = NULL,
-    };
+    kparms.gop_mode = *gop->Mode,
 
     // Allocate buffer for kernel bitmap fonts
     kparms.num_fonts = 2;
@@ -1987,8 +1992,8 @@ EFI_STATUS load_kernel(void) {
 
     // Final cleanup
     cleanup:
-    bs->FreePool(file_buffer);  // Free memory allocated for ESP file
-    bs->FreePool(disk_buffer);  // Free memory allocated for data partition file
+    if (file_buffer) bs->FreePool(file_buffer);  // Free memory for ESP file
+    if (disk_buffer) bs->FreePool(disk_buffer);  // Free memory for data partition file
 
     if (pkg_list) bs->FreePool(pkg_list);   // Free memory for simple font package list
 
@@ -2000,7 +2005,6 @@ EFI_STATUS load_kernel(void) {
         bs->FreePool(kparms.fonts);   // Free memory for kparms fonts array
     }
 
-    exit:
     printf(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
@@ -2525,6 +2529,61 @@ EFI_STATUS change_boot_variables(void) {
     return EFI_SUCCESS;
 }
 
+// =================================================================
+// "Install" this disk image/bootloader, by creating a new 
+//    file marking it as installed. This file existing on
+//    boot will go on to load the kernel instead of the main menu
+// =================================================================
+EFI_STATUS install_to_disk(void) { 
+    EFI_STATUS status = EFI_SUCCESS;
+
+    CHAR16 *path = u"\\EFI\\BOOT\\INSTALL.DAT";
+    printf(u"\r\nInstall to disk by writing file '%s' (Y/N)?  ", path);
+
+    bool yes = false, no = false;
+    EFI_INPUT_KEY key = get_key();
+    while (key.UnicodeChar != u'\r' && key.ScanCode != SCANCODE_ESC) {
+        yes = no = false;
+        yes = (key.UnicodeChar == 'Y' || key.UnicodeChar == 'y');
+        no  = (key.UnicodeChar == 'N' || key.UnicodeChar == 'n');
+        if (yes || no) printf(u"\b%c", key.UnicodeChar);    // Overwrite character at same position
+        key = get_key();
+    }
+    printf(u"\r\n");
+
+    if (yes) {
+        EFI_FILE_PROTOCOL *root = esp_root_dir();
+        if (!root) {
+            error(0, u"Could not get ESP root directory.\r\n");
+            return 1;
+        }
+
+        // Create new empty file, flags must be Create+Read+Write
+        EFI_FILE_PROTOCOL *file = NULL;
+        status = root->Open(root, 
+                            &file, 
+                            path, 
+                            EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+                            0);
+
+        if (EFI_ERROR(status)) 
+            error(status, u"Could not create new file '%s'\r\n", path);
+        else {
+            printf(u"\r\nFile '%s' written.\r\n"
+                   u"Next boot will automatically load the kernel and not the main menu.\r\n"
+                   u"Press any key to go on...\r\n\r\n",
+                   path);
+            get_key();
+        }
+
+        // Cleanup file/directory pointers
+        if (file) file->Close(file);
+        if (root) root->Close(root);
+    }
+
+    return status;
+}
+
 // ===================================================
 // Write disk image to other disk (blockIO media ID)
 // ===================================================
@@ -2556,8 +2615,7 @@ EFI_STATUS write_to_another_disk(void) {
         return 1;
     }
 
-    char *str_pos = NULL;
-    str_pos = strstr(file_buffer, "DISK_SIZE=");
+    char *str_pos = strstr(file_buffer, "DISK_SIZE=");
     if (!str_pos) {
         error(0, u"Could not find disk image size in DSKIMG.INF\r\n");
         return 1;
@@ -2657,6 +2715,10 @@ EFI_STATUS write_to_another_disk(void) {
         return 1;
     }
 
+    // Ask user to install bootloader yes/no. If yes, will autoload kernel on next
+    //   boot from new disk from existence of new "install" file.
+    install_to_disk();
+
     // Print info about chosen disk and disk image
     // block size for from and to disks
     UINTN from_block_size = disk_image_bio->Media->BlockSize, 
@@ -2731,6 +2793,28 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     // Disable Watchdog Timer
     bs->SetWatchdogTimer(0, 0x10000, 0, NULL);
 
+    // Get current text mode ColsxRows values
+    UINTN cols = 0, rows = 0;
+    cout->QueryMode(cout, cout->Mode->Mode, &cols, &rows);
+
+    // Set global text rows/cols values
+    text_rows = rows; 
+    text_cols = cols;
+
+    // Check for "installed" file to autoload kernel instead of main menu, or not
+    EFI_FILE_PROTOCOL *root = esp_root_dir();
+    if (root) {
+        EFI_STATUS status = EFI_SUCCESS;
+        CHAR16 *path = u"\\EFI\\BOOT\\INSTALL.DAT";
+        EFI_FILE_PROTOCOL *file = NULL;
+        status = root->Open(root, &file, path, EFI_FILE_MODE_READ, 0);
+        autoload_kernel = !EFI_ERROR(status);
+        if (file) file->Close(file);
+        if (root) root->Close(root);
+    }
+
+    if (autoload_kernel) load_kernel(); // Load kernel; Should not return!
+
     // Menu text on screen
     const CHAR16 *menu_choices[] = {
         u"Set Text Mode",
@@ -2745,6 +2829,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Load Kernel",
         u"Change Boot Variables",
         u"Write Disk Image Image To Other Disk",
+        u"Install Bootloader & Autoload Kernel",
     };
 
     // Functions to call for each menu option
@@ -2760,8 +2845,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         print_efi_global_variables,
         load_kernel,
         change_boot_variables,
-        write_to_another_disk
-        // TODO: "install" function & menu option
+        write_to_another_disk,
+        install_to_disk
     };
 
     // Connect all controllers found for all handles, to hopefully fix
@@ -2774,22 +2859,14 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         UINT32 cols;
     } Timer_Context;
 
+    Timer_Context context = { .rows = rows, .cols = cols };
+
     // Screen loop
     bool running = true;
     while (running) {
         // Clear console output; clear screen to background color and
         //   set cursor to 0,0
         cout->ClearScreen(cout);
-
-        // Get current text mode ColsxRows values
-        UINTN cols = 0, rows = 0;
-        cout->QueryMode(cout, cout->Mode->Mode, &cols, &rows);
-
-        // Set global text rows/cols values
-        text_rows = rows; 
-        text_cols = cols;
-
-        Timer_Context context = { .rows = rows, .cols = cols };
 
         // Close Timer Event for cleanup
         bs->CloseEvent(timer_event);
@@ -2879,6 +2956,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
                 default:
                     if (key.UnicodeChar == u'\r') {
+                        cout->ClearScreen(cout);
+
                         // Enter key, select choice
                         EFI_STATUS return_status = menu_funcs[current_row]();
                         if (EFI_ERROR(return_status)) 

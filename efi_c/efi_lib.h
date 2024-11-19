@@ -1388,6 +1388,55 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
     return buffer;
 }
 
+// ============================================================================
+// Get EFI_FILE_PROTOCOL* to root directory '/' of EFI System Partition (ESP)
+// NOTE: Caller must close open root directory pointer with 
+//   e.g. "root->Close(root);"
+// ============================================================================
+EFI_FILE_PROTOCOL *esp_root_dir(VOID) {
+    EFI_FILE_PROTOCOL *root = NULL;
+    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
+    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
+    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+
+    EFI_STATUS status = EFI_SUCCESS;
+    status = bs->OpenProtocol(image,
+                              &lip_guid,
+                              (VOID **)&lip,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not open Loaded Image Protocol\r\n");
+        goto cleanup;
+    }
+
+    // Get Simple File System Protocol for the device handle for this loaded
+    //   image, to open the root directory for the ESP
+    status = bs->OpenProtocol(lip->DeviceHandle,
+                              &sfsp_guid,
+                              (VOID **)&sfsp,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not open Simple File System Protocol\r\n");
+        goto cleanup;
+    }
+
+    // Open root directory via OpenVolume()
+    status = sfsp->OpenVolume(sfsp, &root);
+    if (EFI_ERROR(status)) 
+        error(status, u"Could not Open Volume for root directory\r\n");
+
+    cleanup:
+    if (lip)  bs->CloseProtocol(lip->DeviceHandle, &sfsp_guid, image, NULL);
+    if (sfsp) bs->CloseProtocol(image, &lip_guid, image, NULL);
+
+    return root;
+}
+
 // TODO: Make helper function to read disk partition file to buffer,
 //   similar to VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size). 
 //   Get info from file \\EFI\\BOOT\\DATAFLS.INF, call 
