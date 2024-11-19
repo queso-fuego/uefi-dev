@@ -557,12 +557,12 @@ VOID *get_config_table_by_guid(EFI_GUID guid) {
     return NULL;    // Did not find config table
 }
 
-// ================================
-// Print a number to stdout
-// ================================
-BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed, UINTN min_digits, CHAR16 *buf, 
-                     UINTN *buf_idx) {
-    
+// =================================
+// Add integer as string to buffer
+// =================================
+BOOLEAN
+add_int_to_buf(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digits, CHAR16 *buf, 
+               UINTN *buf_idx) {
     const CHAR16 *digits = u"0123456789ABCDEF";
     CHAR16 buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
     UINTN i = 0;
@@ -574,7 +574,7 @@ BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed, UINTN min_digi
     }
 
     // Only use and print negative numbers if decimal and signed True
-    if (base == 10 && is_signed && (INTN)number < 0) {
+    if (base == 10 && signed_num && (INTN)number < 0) {
        number = -(INTN)number;  // Get absolute value of correct signed value to get digits to print
        negative = TRUE;
     }
@@ -586,13 +586,13 @@ BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed, UINTN min_digi
 
     while (i < min_digits) buffer[i++] = u'0'; // Pad with 0s
 
-    // Print negative sign for decimal numbers
+    // Add negative sign for decimal numbers
     if (base == 10 && negative) buffer[i++] = u'-';
 
     // NULL terminate string
     buffer[i--] = u'\0';
 
-    // Reverse buffer before printing
+    // Reverse buffer to read left to right
     for (UINTN j = 0; j < i; j++, i--) {
         // Swap digits
         UINTN temp = buffer[i];
@@ -607,7 +607,6 @@ BOOLEAN print_number(UINTN number, UINT8 base, BOOLEAN is_signed, UINTN min_digi
     }
     return TRUE;
 }
-
 
 // ===================================================================
 // Print formatted strings to stdout, using a va_list for arguments
@@ -628,9 +627,13 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
             UINTN length_bits = 0;  
             UINTN num_printed = 0;      // # of digits/chars printed for numbers or strings
             UINT8 base = 0;
-            bool signed_num = false;
-            bool numeric = false;
+            bool input_precision = false;
+            bool signed_num   = false;
+            bool int_num      = false;
+            bool double_num   = false;
             bool left_justify = false;  // Left justify text from '-' flag instead of default right justify
+            bool space_flag   = false;
+            bool plus_flag    = false;
             CHAR16 padding_char = ' ';  // '0' or ' ' depending on flags
             i++;
 
@@ -645,28 +648,33 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
                         // Alternate form
                         alternate_form = true;
                         i++;
-                        break;
+                        continue;
 
                     case u'0':
                         // 0-pad numbers on the left, unless '-' or precision is also defined
                         padding_char = '0'; 
                         i++;
-                        break;
+                        continue;
 
                     case u' ':
-                        // TODO:
+                        // Print a space before positive signed number conversion or empty string
+                        //   number conversions
+                        space_flag = true;
+                        if (plus_flag) space_flag = false;  // Plus flag '+' overrides space flag
                         i++;
-                        break;
+                        continue;
 
                     case u'+':
-                        // TODO:
+                        // Always print +/- before a signed number conversion
+                        plus_flag = true;
+                        if (space_flag) space_flag = false; // Plus flag '+' overrides space flag
                         i++;
-                        break;
+                        continue;
 
                     case u'-':
                         left_justify = true;
                         i++;
-                        break;
+                        continue;
 
                     default:
                         break;
@@ -687,6 +695,7 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
 
             // Check for precision/maximum field width e.g. in "8.2" this would be 2
             if (fmt[i] == u'.') {
+                input_precision = true; 
                 i++;
                 if (fmt[i] == u'*') {
                     // Get int argument for precision
@@ -750,7 +759,7 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
 
                 case u'd': {
                     // Print INT32; printf("%d", number_int32)
-                    numeric = true;
+                    int_num = true;
                     base = 10;
                     signed_num = true;
                 }
@@ -758,7 +767,7 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
 
                 case u'x': {
                     // Print hex UINTN; printf("%x", number_uintn)
-                    numeric = true;
+                    int_num = true;
                     base = 16;
                     signed_num = false;
                     if (alternate_form) {
@@ -770,7 +779,7 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
 
                 case u'u': {
                     // Print UINT32; printf("%u", number_uint32)
-                    numeric = true;
+                    int_num = true;
                     base = 10;
                     signed_num = false;
                 }
@@ -778,7 +787,7 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
 
                 case u'b': {
                     // Print UINTN as binary; printf("%b", number_uintn)
-                    numeric = true;
+                    int_num = true;
                     base = 2;
                     signed_num = false;
                     if (alternate_form) {
@@ -790,13 +799,22 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
 
                 case u'o': {
                     // Print UINTN as octal; printf("%o", number_uintn)
-                    numeric = true;
+                    int_num = true;
                     base = 8;
                     signed_num = false;
                     if (alternate_form) {
                         buf[buf_idx++] = u'0';
                         buf[buf_idx++] = u'o';
                     }
+                }
+                break;
+
+                case u'f': {
+                    // Print INTN rounded float value
+                    double_num = true;
+                    signed_num = true;
+                    base = 10;
+                    if (!input_precision) precision = 6;    // Default decimal places to print
                 }
                 break;
 
@@ -810,60 +828,107 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
                     break;
             }
 
-            if (numeric) {
-                // Printing a number
+            if (int_num) {
+                // Number conversion: Integer
                 UINT64 number = 0;
                 switch (length_bits) {
                     case 0:
-                    case 32:        // l
+                    case 32: 
                     default:
+                        // l
                         number = va_arg(args, UINT32);
+                        if (signed_num) number = (INT32)number;
                         break;
 
                     case 8:
                         // hh
                         number = (UINT8)va_arg(args, int);
+                        if (signed_num) number = (INT8)number;
                         break;
 
                     case 16:
                         // h
                         number = (UINT16)va_arg(args, int);
+                        if (signed_num) number = (INT16)number;
                         break;
 
                     case 64:
                         // ll
                         number = va_arg(args, UINT64);
+                        if (signed_num) number = (INT64)number;
                         break;
                 }
-                print_number(number, base, signed_num, precision, buf, &buf_idx);  
+
+                // Add space before positive number for ' ' flag
+                if (space_flag && signed_num && number >= 0) buf[buf_idx++] = u' ';    
+
+                // Add sign +/- before signed number for '+' flag
+                if (plus_flag && signed_num) buf[buf_idx++] = number >= 0 ? u'+' : u'-';
+
+                add_int_to_buf(number, base, signed_num, precision, buf, &buf_idx);
             }
 
-            // Print padding depending on flags (0 or space) and left/right justify, and 
-            //   print buffer contents for % formatted conversion string
-            buf[buf_idx] = u'\0';   // Null terminate buffer string
+            if (double_num) {
+                // Number conversion: Float/Double
+                double number = va_arg(args, double);
+                UINTN whole_num = 0;
+
+                // Get digits before decimal point
+                whole_num = (UINTN)number;
+                UINTN num_digits = 0;
+                do {
+                   num_digits++; 
+                   whole_num /= 10;
+                } while (whole_num > 0);
+
+                // Add digits to write buffer
+                add_int_to_buf(number, base, signed_num, num_digits, buf, &buf_idx);
+
+                // Print decimal digits equal to precision value, 
+                //   if precision is explicitly 0 then do not print
+                if (!input_precision || precision != 0) {
+                    buf[buf_idx++] = u'.';      // Add decimal point
+
+                    whole_num = (UINTN)number;  // Get only digits before decimal
+                    if (number < 0.0) number = -number; // Ensure number is positive
+                    number -= whole_num;        // Get only decimal digits
+
+                    // Move precision # of decimal digits before decimal point 
+                    //   using base 10, number = number * 10^precision
+                    for (UINTN i = 0; i < precision; i++)
+                        number *= 10;
+
+                    whole_num = (UINTN)number;  // Get only digits before decimal
+
+                    // Add digits to write buffer
+                    add_int_to_buf(number, base, signed_num, precision, buf, &buf_idx);
+                }
+            }
 
             // Flags are defined such that 0 is overruled by left justify and precision
             if (padding_char == u'0' && (left_justify || precision > 0))
                 padding_char = u' ';
 
-            charstr[0] = padding_char;
-            charstr[1] = u'\0';
+            // Add padding depending on flags (0 or space) and left/right justify
+            INTN diff = min_field_width - buf_idx;
+            if (diff > 0) {
+                if (left_justify) {
+                    // Append padding to minimum width, always spaces
+                    while (diff--) buf[buf_idx++] = u' ';   
+                } else {
+                    // Right justify
+                    // Copy buffer to end of buffer
+                    INTN dst = min_field_width-1, src = buf_idx-1;
+                    while (src >= 0)  buf[dst--] = buf[src--];  // e.g. "TEST\0\0" -> "TETEST"
 
-            if (left_justify) {
-                // Print buffer contents and then blanks up until min field width for padding
-                stream->OutputString(stream, buf);
-                while (buf_idx < min_field_width) {
-                    stream->OutputString(stream, charstr);
-                    buf_idx++;
+                    // Overwrite beginning of buffer with padding
+                    dst = (int_num && alternate_form) ? 2 : 0;  // Skip 0x/0b/0o/... prefix
+                    while (diff--) buf[dst++] = padding_char;   // e.g. "TETEST" -> "  TEST"
                 }
-            } else {
-                // Default/right justified; Print padding first and then buffer contents
-                while (buf_idx < min_field_width) {
-                    stream->OutputString(stream, charstr);
-                    buf_idx++;
-                }
-                stream->OutputString(stream, buf);
             }
+
+            // Print buffer output for formatted string
+            stream->OutputString(stream, buf);
 
         } else {
             // Not formatted string, print next character
@@ -1034,10 +1099,10 @@ void print_elf_info(VOID *elf_buffer) {
     printf(u"\r\nMemory needed for file: %#llx bytes\r\n", max_memory_needed);
 }
 
-// ===============================================================
+// =============================================================
 // Print information for a PE32+ file
-// NOTE: Assumes file is a PIE (Position Independent Executable)
-// ===============================================================
+// NOTE: Assumes file is PIE (Position Independent Executable)
+// =============================================================
 void print_pe_info(VOID *pe_buffer) {
     const UINT8 pe_sig_offset = 0x3C; // From PE file format
     UINT32 pe_sig_pos = *(UINT32 *)((UINT8 *)pe_buffer + pe_sig_offset);
@@ -1099,16 +1164,21 @@ void print_pe_info(VOID *pe_buffer) {
 //   an output buffer. File path must start with root '\',
 //   escaped as needed by the caller with '\\'.
 //
-// Returns: non-null pointer to allocated buffer with file data, 
-//  allocated with Boot Services AllocatePool(), or NULL if not 
-//  found or error.
+// Returns: 
+//  - non-null pointer to allocated buffer with file data, 
+//      allocated with Boot Services AllocatePool(), or NULL if not 
+//      found or error.
+//  - Size of returned buffer, if not NULL
 //
 //  NOTE: Caller will have to use FreePool() on returned buffer to 
 //    free allocated memory.
 // ===================================================================
 VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     VOID *file_buffer = NULL;
+    EFI_FILE_PROTOCOL *root = NULL, *file = NULL;
     EFI_STATUS status;
+
+    *file_size = 0;
 
     // Get loaded image protocol first to grab device handle to use 
     //   simple file system protocol on
@@ -1141,7 +1211,6 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     }
 
     // Open root directory via OpenVolume()
-    EFI_FILE_PROTOCOL *root = NULL;
     status = sfsp->OpenVolume(sfsp, &root);
     if (EFI_ERROR(status)) {
         error(status, u"Could not Open Volume for root directory in ESP\r\n");
@@ -1149,13 +1218,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     }
 
     // Open file in input path (qualified from root directory)
-    EFI_FILE_PROTOCOL *file = NULL;
-    status = root->Open(root, 
-                        &file, 
-                        path,
-                        EFI_FILE_MODE_READ,
-                        0);
-
+    status = root->Open(root, &file, path, EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(status)) {
         error(status, u"Could not open file '%s'\r\n", path);
         goto cleanup;
@@ -1168,7 +1231,7 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     status = file->GetInfo(file, &fi_guid, &buf_size, &file_info);
     if (EFI_ERROR(status)) {
         error(status, u"Could not get file info for file '%s'\r\n", path);
-        goto file_cleanup;
+        goto cleanup;
     }
 
     // Allocate buffer for file
@@ -1176,31 +1239,24 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     status = bs->AllocatePool(EfiLoaderData, buf_size, &file_buffer);
     if (EFI_ERROR(status) || buf_size != file_info.FileSize) {
         error(status, u"Could not allocate memory for file '%s'\r\n", path);
-        goto file_cleanup;
-    }
-
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not get file info for file '%s'\r\n", path);
-        goto file_cleanup;
+        goto cleanup;
     }
 
     // Read file into buffer
     status = file->Read(file, &buf_size, file_buffer);
     if (EFI_ERROR(status) || buf_size != file_info.FileSize) {
         error(status, u"Could not read file '%s' into buffer\r\n", path);
-        goto file_cleanup;
+        goto cleanup;
     }
 
     // Set output file size in buffer
     *file_size = buf_size;
 
-    // Close open file/dir pointers
-    file_cleanup:
-    root->Close(root);
-    file->Close(file);
-
-    // Final cleanup before returning
     cleanup:
+    // Close open file/dir pointers
+    if (file) file->Close(file);
+    if (root) root->Close(root);
+
     // Close open protocols
     bs->CloseProtocol(lip->DeviceHandle,
                       &sfsp_guid,
@@ -1228,7 +1284,8 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
 //  NOTE: Caller will have to use FreePool() on returned buffer to 
 //    free allocated memory.
 // =================================================================
-EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID, bool executable) {
+EFI_PHYSICAL_ADDRESS 
+read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID, bool executable) {
     EFI_PHYSICAL_ADDRESS buffer = 0;
     EFI_STATUS status = EFI_SUCCESS;
 
@@ -1419,6 +1476,7 @@ EFI_HII_PACKAGE_LIST_HEADER *hii_database_package_list(UINT8 package_type) {
     // Free memory when done and return result
     cleanup:
     if (handle_buf) bs->FreePool(handle_buf);
+
     return pkg_list;    // Caller needs to free this with bs->FreePool()
 }
 
@@ -1454,71 +1512,71 @@ EFI_HII_PACKAGE_LIST_HEADER *hii_database_package_list(UINT8 package_type) {
 
 // ---------------------------------------------------------------------
 // Example (may be buggy or not work): add all simple fonts in package list to kernel parms:
-//Kernel_Parms kparms = {0};
-//...
-//// Get simple font package list
-//EFI_HII_PACKAGE_LIST_HEADER *simple_fonts = get_hii_package_list(EFI_HII_PACKAGE_SIMPLE_FONTS);
+// Kernel_Parms kparms = {0};
+// ...
+// // Get simple font package list
+// EFI_HII_PACKAGE_LIST_HEADER *simple_fonts = get_hii_package_list(EFI_HII_PACKAGE_SIMPLE_FONTS);
 
-//// Get total number of fonts in package list
-//UINT32 total_fonts = 0;
-//for (EFI_HII_PACKAGE_HEADER *pkg_hdr = (EFI_HII_PACKAGE_HEADER *)(simple_fonts+1);
-//     pkg_hdr->Type != EFI_HII_PACKAGE_END;
-//     pkg_hdr = (EFI_HII_PACKAGE_HEADER *)((UINT8 *)pkg_hdr + pkg_hdr->Length)) {
+// // Get total number of fonts in package list
+// UINT32 total_fonts = 0;
+// for (EFI_HII_PACKAGE_HEADER *pkg_hdr = (EFI_HII_PACKAGE_HEADER *)(simple_fonts+1);
+//      pkg_hdr->Type != EFI_HII_PACKAGE_END;
+//      pkg_hdr = (EFI_HII_PACKAGE_HEADER *)((UINT8 *)pkg_hdr + pkg_hdr->Length)) {
 
-//    total_fonts++;
-//}
+//     total_fonts++;
+// }
 
-//// Allocate array for all fonts
-//kparms.num_fonts = total_fonts;
-//status = bs->AllocatePool(EfiLoaderData, 
-//                          sizeof *kparms.fonts * kparms.num_fonts, 
-//                          (VOID **)&kparms.fonts);
+// // Allocate array for all fonts
+// kparms.num_fonts = total_fonts;
+// status = bs->AllocatePool(EfiLoaderData, 
+//                           sizeof *kparms.fonts * kparms.num_fonts, 
+//                           (VOID **)&kparms.fonts);
 
-//// Loop through all font packages in list
-//UINT32 current_font = 0;
-//for (EFI_HII_PACKAGE_HEADER *pkg_hdr = (EFI_HII_PACKAGE_HEADER *)(simple_fonts+1);
-//     pkg_hdr->Type != EFI_HII_PACKAGE_END;
-//     pkg_hdr = (EFI_HII_PACKAGE_HEADER *)((UINT8 *)pkg_hdr + pkg_hdr->Length)) {
+// // Loop through all font packages in list
+// UINT32 current_font = 0;
+// for (EFI_HII_PACKAGE_HEADER *pkg_hdr = (EFI_HII_PACKAGE_HEADER *)(simple_fonts+1);
+//      pkg_hdr->Type != EFI_HII_PACKAGE_END;
+//      pkg_hdr = (EFI_HII_PACKAGE_HEADER *)((UINT8 *)pkg_hdr + pkg_hdr->Length)) {
 
-//    EFI_HII_SIMPLE_FONT_PACKAGE_HDR *simple_font =
-//        (EFI_HII_SIMPLE_FONT_PACKAGE_HDR *)pkg_hdr;
+//     EFI_HII_SIMPLE_FONT_PACKAGE_HDR *simple_font =
+//         (EFI_HII_SIMPLE_FONT_PACKAGE_HDR *)pkg_hdr;
 
-//    // Allocate buffer for narrow glyphs, note adding 8 bytes for bitmap printing logic
-//    //   in kernel later on.
-//    VOID *font_glyphs = NULL;
-//    const uint32_t bytes_per_glyph = EFI_GLYPH_HEIGHT;
-//    const UINTN num_glyphs = max(256, simple_font->NumberOfNarrowGlyphs);
-//    status = bs->AllocatePool(EfiLoaderData, 
-//                              (num_glyphs * bytes_per_glyph) + 8,
-//                              &font_glyphs);
+//     // Allocate buffer for narrow glyphs, note adding 8 bytes for bitmap printing logic
+//     //   in kernel later on.
+//     VOID *font_glyphs = NULL;
+//     const uint32_t bytes_per_glyph = EFI_GLYPH_HEIGHT;
+//     const UINTN num_glyphs = max(256, simple_font->NumberOfNarrowGlyphs);
+//     status = bs->AllocatePool(EfiLoaderData, 
+//                               (num_glyphs * bytes_per_glyph) + 8,
+//                               &font_glyphs);
 
-//    memset(font_glyphs, 0, num_glyphs * bytes_per_glyph);   // 0-init buffer
+//     memset(font_glyphs, 0, num_glyphs * bytes_per_glyph);   // 0-init buffer
 
-//    // Copy starting at lowest glyph, skipping all characters below that 
-//    EFI_NARROW_GLYPH *narrow_glyphs = (EFI_NARROW_GLYPH *)(simple_font+1);
-//    const CHAR16 min_glyph = narrow_glyphs[0].UnicodeWeight;
-//    memcpy((UINT8 *)font_glyphs + (min_glyph * bytes_per_glyph), 
-//           narrow_glyphs,
-//           simple_font->NumberOfNarrowGlyphs * sizeof *narrow_glyphs);
+//     // Copy starting at lowest glyph, skipping all characters below that 
+//     EFI_NARROW_GLYPH *narrow_glyphs = (EFI_NARROW_GLYPH *)(simple_font+1);
+//     const CHAR16 min_glyph = narrow_glyphs[0].UnicodeWeight;
+//     memcpy((UINT8 *)font_glyphs + (min_glyph * bytes_per_glyph), 
+//            narrow_glyphs,
+//            simple_font->NumberOfNarrowGlyphs * sizeof *narrow_glyphs);
 
-//    // Add font info and buffer to kernel font parms
-//    char name[26] = "uefi_simple_font_narrow_00";
-//    name[24] = ((current_font / 10) % 10) + '0';
-//    name[25] = (current_font % 10) + '0';
+//     // Add font info and buffer to kernel font parms
+//     char name[26] = "uefi_simple_font_narrow_00";
+//     name[24] = ((current_font / 10) % 10) + '0';
+//     name[25] = (current_font % 10) + '0';
 
-//    kparms.fonts[current_font++] = (Bitmap_Font){
-//        .name            = name,
-//        .width           = EFI_GLYPH_WIDTH,
-//        .height          = EFI_GLYPH_HEIGHT,
-//        //.bytes_per_glyph = EFI_GLYPH_HEIGHT,    
-//        .left_col_first  = false,           // Bits in memory are stored right to left
-//        .num_glyphs      = simple_font->NumberOfNarrowGlyphs,
-//        .glyphs          = font_glyphs,
-//    };
-//}
+//     kparms.fonts[current_font++] = (Bitmap_Font){
+//         .name            = name,
+//         .width           = EFI_GLYPH_WIDTH,
+//         .height          = EFI_GLYPH_HEIGHT,
+//         //.bytes_per_glyph = EFI_GLYPH_HEIGHT,    
+//         .left_col_first  = false,           // Bits in memory are stored right to left
+//         .num_glyphs      = simple_font->NumberOfNarrowGlyphs,
+//         .glyphs          = font_glyphs,
+//     };
+// }
 
-//// Free package list when done
-//if (simple_fonts) bs->FreePool(simple_fonts);
+// // Free package list when done
+// if (simple_fonts) bs->FreePool(simple_fonts);
 // ---------------------------------------------------------------------
 
 
