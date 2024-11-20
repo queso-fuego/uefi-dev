@@ -3,8 +3,6 @@
 #include "efi.h"
 #include "efi_lib.h"
 
-#include "ter_132n_psf_font.txt"    // Terminus PSF font, 16x32, ISO8859-1
-                                    //   vars: unsigned char ter_132n_psf[], unsigned int ter_132n_psf_len
 // -----------------
 // Global constants
 // -----------------
@@ -1771,19 +1769,22 @@ EFI_STATUS load_kernel(void) {
         }
     }
 
-    // Get "embedded" PSF file for another bitmap font to use
-    // Assuming psf font is #embed-ed or #include-ed from e.g. xxd -i and variables are 
-    //   defined for e.g.
-    //   "unsigned char ter_132n_psf[] = {};" and "unsigned int ter_132n_psf_len;"
-    PSF2_Header *psf2_hdr = (PSF2_Header *)ter_132n_psf;
-    kparms.fonts[1] = (Bitmap_Font){
-        .name            = "ter-132n.psf",
-        .width           = psf2_hdr->width,
-        .height          = psf2_hdr->height,
-        .left_col_first  = true,                   // Pixels in memory are stored left to right
-        .num_glyphs      = psf2_hdr->num_glyphs,
-        .glyphs          = (uint8_t *)(psf2_hdr+1),
-    };
+    // Get PSF font file for another bitmap font to use;
+    //   this one should be stored in the disk image's data partition
+    char *psf_name = "ter-132n.psf";
+    UINTN psf_size = 0;
+    VOID *psf_font = read_data_partition_file_to_buffer(psf_name, false, &psf_size);
+    if (psf_font) {
+        PSF2_Header *psf2_hdr = psf_font;
+        kparms.fonts[1] = (Bitmap_Font){
+            .name            = psf_name,
+            .width           = psf2_hdr->width,
+            .height          = psf2_hdr->height,
+            .left_col_first  = true,                   // Pixels in memory are stored left to right
+            .num_glyphs      = psf2_hdr->num_glyphs,
+            .glyphs          = (uint8_t *)(psf2_hdr+1),
+        };
+    }
 
     // Get Memory Map
     if (EFI_ERROR(get_memory_map(&kparms.mmap))) goto cleanup;

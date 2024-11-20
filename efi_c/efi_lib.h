@@ -2242,7 +2242,7 @@ VOID *read_data_partition_file_to_buffer(char *in_name, bool executable, UINTN *
 
     UINTN file_size = atoi(str_pos);
 
-    str_pos = stpstr(esp_file, "DISK_LBA=");
+    str_pos = stpstr(str_pos, "DISK_LBA=");
     if (!str_pos) {
         error(0, u"Could not find disk lba value for '%s'\r\n", in_name);
         goto cleanup;

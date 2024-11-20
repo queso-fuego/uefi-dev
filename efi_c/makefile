@@ -58,9 +58,12 @@ KERNEL ::= kernel.elf    # ELF64 PIE kernel binary
 #KERNEL ::= kernel.binelf # Flat binary PIE kernel from ELF file
 #KERNEL ::= kernel.binpe  # Flat binary PIE kernel from PE file
 
+FONT ::= ter-132n.psf	# PSF2 Bitmapped Font: Terminus 16x32 ISO8859-1
+
 # Add kernel binary to new disk image
 ADD_KERNEL = \
 	cp $(KERNEL) $(DISK_IMG_FOLDER); \
+	cp $(FONT) $(DISK_IMG_FOLDER); \
 	cd $(DISK_IMG_FOLDER); \
 	./$(DISK_IMG_PGM) -ad $(KERNEL) $(FONT);
 
