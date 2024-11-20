@@ -1219,58 +1219,6 @@ EFI_STATUS print_block_io_partitions(void) {
     return EFI_SUCCESS;
 }
 
-// ================================================
-// Get Media ID value for this running disk image
-// ================================================
-EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
-    EFI_STATUS status = EFI_SUCCESS;
-
-    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-    EFI_BLOCK_IO_PROTOCOL *biop;
-
-    // Get media ID for this disk image 
-    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
-    status = bs->OpenProtocol(image,
-                              &lip_guid,
-                              (VOID **)&lip,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Loaded Image Protocol\r\n");
-        goto done;
-    }
-
-    // Get Block IO protocol for loaded image's device handle
-    status = bs->OpenProtocol(lip->DeviceHandle,
-                              &bio_guid,
-                              (VOID **)&biop,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
-        goto done;
-    }
-
-    *mediaID = biop->Media->MediaId;  // Media ID for this running disk image itself
-
-    // Close open protocols when done
-    bs->CloseProtocol(lip->DeviceHandle,
-                      &bio_guid,
-                      image,
-                      NULL);
-
-    bs->CloseProtocol(image,
-                      &lip_guid,
-                      image,
-                      NULL);
-
-    done:
-    return status;
-}
-
 // ==========================================================
 // Load an ELF64 PIE file into a new buffer, and return the 
 //   entry point for the loaded ELF program
@@ -1651,13 +1599,6 @@ void set_runtime_address_map(Memory_Map_Info *mmap) {
 // Read a file from the basic data partition
 // ==========================================
 EFI_STATUS load_kernel(void) {
-    // TODO: Make helper function to load a data partition file to a buffer,
-    //   from getting info in \\EFI\\BOOT\\DATAFLS.INF,
-    //   and use that to load the kernel binary to replace logic in this
-    //   function for getting DATAFLS.INF info and calling 
-    //   read_disk_lbas_to_buffer().
-    VOID *file_buffer = NULL;
-    VOID *disk_buffer = NULL;
     EFI_HII_PACKAGE_LIST_HEADER *pkg_list = NULL;   
     EFI_STATUS status = EFI_SUCCESS;
 
@@ -1674,62 +1615,15 @@ EFI_STATUS load_kernel(void) {
 
     cout->ClearScreen(cout);
 
-    // Get media ID (disk number for Block IO protocol Media) for this running disk image
-    UINT32 image_mediaID = 0;
-    status = get_disk_image_mediaID(&image_mediaID);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not find or get MediaID value for disk image\r\n");
-        goto cleanup;
-    }
-
-    // Print file info for DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
-    CHAR16 *file_name = u"\\EFI\\BOOT\\DATAFLS.INF";
-    UINTN buf_size = 0;
-    file_buffer = read_esp_file_to_buffer(file_name, &buf_size);
-    if (!file_buffer) {
-        error(0, u"Could not find or read file '%s' to buffer\r\n", file_name);
-        goto cleanup;
-    }
-
-    // Parse data from DATAFLS.INF file to get disk LBA and file size
-    char *str_pos = NULL;
-    str_pos = strstr(file_buffer, "kernel");
-    if (!str_pos) {
-        error(0, u"Could not find kernel file in data partition\r\n");
-        goto cleanup;
-    }
-
-    printf_c16(u"Found kernel file\r\n");
-
-    str_pos = strstr(file_buffer, "FILE_SIZE=");
-    if (!str_pos) {
-        error(0, u"Could not find file size from buffer for '%s'\r\n", file_name);
-        goto cleanup;
-    }
-
-    str_pos += strlen("FILE_SIZE=");
-    UINTN file_size = atoi(str_pos);
-
-    str_pos = strstr(file_buffer, "DISK_LBA=");
-    if (!str_pos) {
-        error(0, u"Could not find disk lba value from buffer for '%s'\r\n", file_name);
-        goto cleanup;
-    }
-
-    str_pos += strlen("DISK_LBA=");
-    UINTN disk_lba = atoi(str_pos);
-
-    printf_c16(u"File Size: %u, Disk LBA: %u\r\n", file_size, disk_lba);
-
-    // Read disk lbas for file into buffer
-    disk_buffer = (VOID *)read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID, true);
+    // Get kernel file from data partition on disk 
+    UINTN file_size = 0;
+    VOID *disk_buffer = read_data_partition_file_to_buffer("kernel", false, &file_size);
     if (!disk_buffer) {
-        error(0, u"Could not find or read data partition file to buffer\r\n");
-        bs->FreePool(file_buffer);  // Free memory allocated for ESP file
+        error(0, u"Could not find or read kernel file to buffer\r\n");
         goto cleanup;
     }
 
-    // Load Kernel File depending on format (initial header bytes)
+    // Load Kernel binary depending on format (initial header bytes)
     UINT8 *hdr = disk_buffer;
     printf_c16(u"Header bytes: [%hhx][%hhx][%hhx][%hhx]\r\n", 
            hdr[0], hdr[1], hdr[2], hdr[3]);
@@ -1923,7 +1817,7 @@ EFI_STATUS load_kernel(void) {
     for (UINTN i = 0; i < (kernel_size + (PAGE_SIZE-1)) / PAGE_SIZE; i++) 
         map_page(kernel_buffer + (i*PAGE_SIZE), KERNEL_START_ADDRESS + (i*PAGE_SIZE), &kparms.mmap); 
 
-    // NOTE: Remap kparms to higher address?
+    // NOTE: TODO: Remap kparms to higher address?
 
     // Identity map framebuffer
     for (UINTN i = 0; i < (kparms.gop_mode.FrameBufferSize + (PAGE_SIZE-1)) / PAGE_SIZE; i++) 
@@ -2009,10 +1903,8 @@ EFI_STATUS load_kernel(void) {
 
     // Final cleanup
     cleanup:
-    if (file_buffer) bs->FreePool(file_buffer);  // Free memory for ESP file
-    if (disk_buffer) bs->FreePool(disk_buffer);  // Free memory for data partition file
-
-    if (pkg_list) bs->FreePool(pkg_list);   // Free memory for simple font package list
+    if (disk_buffer) bs->FreePool(disk_buffer); // Free memory for data partition file
+    if (pkg_list)    bs->FreePool(pkg_list);    // Free memory for simple font package list
 
     if (kparms.fonts) {
         // Free memory for kparms font glyphs

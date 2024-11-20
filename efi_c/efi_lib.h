@@ -2146,18 +2146,122 @@ EFI_STATUS check_gop_mode(UINT32 *ret_mode, UINT32 xres, UINT32 yres) {
     return status;
 }
 
-// TODO: Make helper function to read disk partition file to buffer,
-//   similar to VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size). 
-//   Get info from file \\EFI\\BOOT\\DATAFLS.INF, call 
-//     EFI_PHYSICAL_ADDRESS read_disk_lbas_to_buffer(EFI_LBA disk_lba, 
-//                                                   UINTN data_size, 
-//                                                   UINT32 disk_mediaID, 
-//                                                   bool executable)
-//     then return the filled buffer.
+// ================================================
+// Get Media ID value for this running disk image
+// ================================================
+EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
+    EFI_STATUS status = EFI_SUCCESS;
+
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_BLOCK_IO_PROTOCOL *biop = NULL;
+
+    // Get media ID for this disk image 
+    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
+    status = bs->OpenProtocol(image,
+                              &lip_guid,
+                              (VOID **)&lip,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not open Loaded Image Protocol\r\n");
+        goto done;
+    }
+
+    // Get Block IO protocol for loaded image's device handle
+    status = bs->OpenProtocol(lip->DeviceHandle,
+                              &bio_guid,
+                              (VOID **)&biop,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
+        goto done;
+    }
+
+    *mediaID = biop->Media->MediaId;  // Media ID for this running disk image itself
+
+    done:
+    // Close open protocols 
+    if (biop) bs->CloseProtocol(lip->DeviceHandle, &bio_guid, image, NULL);
+    if (lip)  bs->CloseProtocol(image, &lip_guid, image, NULL);
+
+    return status;
+}
+
+// ===============================================================
+// Read a file in the GPT disk image's raw data partition,
+//   using information found in the DATAFLS.INF file in the ESP,
+//   created when making the disk image.
 //
-//   Can use this function in load_kernel() to abstract finding kernel file
-//     info and loading it into a buffer, and for loading the PSF font 
-//     instead of embedding it directly in source files, if wanted.
+// Returns: 
+//  - non-null pointer to allocated buffer with file data, 
+//      allocated with Boot Services AllocatePool(), or NULL if not 
+//      found or error.
+//  - Size of returned buffer, if not NULL.
+//
+//  NOTE: Caller will have to use FreePool() on returned buffer to 
+//    free allocated memory.
+// ===============================================================
+VOID *read_data_partition_file_to_buffer(char *in_name, bool executable, UINTN *ret_size) {
+    VOID *esp_file = NULL;
+    VOID *data_file = NULL;
+    EFI_STATUS status = EFI_SUCCESS;
+
+    // Get media ID (disk number for Block IO protocol Media) for this running disk image
+    UINT32 image_mediaID = 0;
+    status = get_disk_image_mediaID(&image_mediaID);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not find or get MediaID value for disk image\r\n");
+        goto cleanup;
+    }
+
+    // Get DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
+    CHAR16 *file_name = u"\\EFI\\BOOT\\DATAFLS.INF";
+    UINTN buf_size = 0;
+    esp_file = read_esp_file_to_buffer(file_name, &buf_size);
+    if (!esp_file) {
+        error(0, u"Could not find or read file '%s' to buffer\r\n", file_name);
+        goto cleanup;
+    }
+
+    // Get disk LBA and file size from DATAFLS.INF for input file name 
+    char *str_pos = stpstr(esp_file, in_name);
+    if (!str_pos) {
+        error(0, u"Could not find file '%s' in data partition\r\n", in_name);
+        goto cleanup;
+    }
+
+    str_pos = stpstr(str_pos, "FILE_SIZE=");
+    if (!str_pos) {
+        error(0, u"Could not find file size for '%s'\r\n", in_name);
+        goto cleanup;
+    }
+
+    UINTN file_size = atoi(str_pos);
+
+    str_pos = stpstr(esp_file, "DISK_LBA=");
+    if (!str_pos) {
+        error(0, u"Could not find disk lba value for '%s'\r\n", in_name);
+        goto cleanup;
+    }
+
+    UINTN disk_lba = atoi(str_pos);
+
+    // Read disk lbas for file into buffer
+    data_file = (VOID *)read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID, executable);
+    *ret_size = file_size;
+    if (!data_file) {
+        error(0, u"Could not find or read data partition file '%s' to buffer\r\n", in_name);
+        *ret_size = 0;
+    } 
+
+    cleanup:
+    if (esp_file) bs->FreePool(esp_file);  
+    return data_file;
+}
 
 // ==================================================
 // Get first package list found in the HII database
