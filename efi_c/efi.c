@@ -5,13 +5,6 @@
 
 #include "ter_132n_psf_font.txt"    // Terminus PSF font, 16x32, ISO8859-1
                                     //   vars: unsigned char ter_132n_psf[], unsigned int ter_132n_psf_len
-
-// -----------------
-// Global macros
-// -----------------
-#define ARRAY_SIZE(x) (sizeof (x) / sizeof (x)[0])
-#define max(x, y) ((x) > (y) ? (x) : (y))
-
 // -----------------
 // Global constants
 // -----------------
@@ -105,31 +98,31 @@ EFI_STATUS set_text_mode(void) {
         UINTN max_cols = 0, max_rows = 0;
         cout->QueryMode(cout, cout->Mode->Mode, &max_cols, &max_rows);
 
-        printf(u"Text mode information:\r\n"
-               u"Max Mode: %d\r\n"
-               u"Current Mode: %d\r\n"
-               u"Attribute: %x\r\n" 
-               u"CursorColumn: %d\r\n"
-               u"CursorRow: %d\r\n"
-               u"CursorVisible: %d\r\n"
-               u"Columns: %d\r\n"
-               u"Rows: %d\r\n\r\n",
-               cout->Mode->MaxMode,
-               cout->Mode->Mode,
-               cout->Mode->Attribute,
-               cout->Mode->CursorColumn,
-               cout->Mode->CursorRow,
-               cout->Mode->CursorVisible,
-               max_cols,
-               max_rows);
+        printf_c16(u"Text mode information:\r\n"
+                   u"Max Mode: %d\r\n"
+                   u"Current Mode: %d\r\n"
+                   u"Attribute: %x\r\n" 
+                   u"CursorColumn: %d\r\n"
+                   u"CursorRow: %d\r\n"
+                   u"CursorVisible: %d\r\n"
+                   u"Columns: %d\r\n"
+                   u"Rows: %d\r\n\r\n",
+                   cout->Mode->MaxMode,
+                   cout->Mode->Mode,
+                   cout->Mode->Attribute,
+                   cout->Mode->CursorColumn,
+                   cout->Mode->CursorRow,
+                   cout->Mode->CursorVisible,
+                   max_cols,
+                   max_rows);
 
-        printf(u"Available text modes:\r\n");
+        printf_c16(u"Available text modes:\r\n");
 
         UINTN menu_top = cout->Mode->CursorRow, menu_bottom = max_rows;
 
         // Print keybinds at bottom of screen
         cout->SetCursorPosition(cout, 0, menu_bottom-3);
-        printf(u"Up/Down Arrow = Move Cursor\r\n"
+        printf_c16(u"Up/Down Arrow = Move Cursor\r\n"
                u"Enter = Select\r\n"
                u"Escape = Go Back");
 
@@ -150,12 +143,12 @@ EFI_STATUS set_text_mode(void) {
 
         // Highlight top menu row to start off
         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-        printf(u"Mode %d: %dx%d", 0, text_modes[0].cols, text_modes[0].rows);
+        printf_c16(u"Mode %d: %dx%d", 0, text_modes[0].cols, text_modes[0].rows);
 
         // Print other text mode infos
         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
         for (UINT32 i = 1; i < menu_len + 1; i++) 
-            printf(u"\r\nMode %d: %dx%d", i, text_modes[i].cols, text_modes[i].rows);
+            printf_c16(u"\r\nMode %d: %dx%d", i, text_modes[i].cols, text_modes[i].rows);
 
         // Get input from user
         cout->SetCursorPosition(cout, 0, menu_top);
@@ -170,17 +163,17 @@ EFI_STATUS set_text_mode(void) {
                 case SCANCODE_UP_ARROW:
                     if (current_row == menu_top && mode_index > 0) {
                         // Scroll menu up by decrementing all modes by 1
-                        printf(u"                    \r");  // Blank out mode text first
+                        printf_c16(u"                    \r");  // Blank out mode text first
 
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
                         mode_index--;
-                        printf(u"Mode %d: %dx%d", 
+                        printf_c16(u"Mode %d: %dx%d", 
                                mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
 
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
                         UINTN temp_mode = mode_index + 1;
                         for (UINT32 i = 0; i < menu_len; i++, temp_mode++) {
-                            printf(u"\r\n                    \r"  // Blank out mode text first
+                            printf_c16(u"\r\n                    \r"  // Blank out mode text first
                                    u"Mode %d: %dx%d\r", 
                                    temp_mode, text_modes[temp_mode].cols, text_modes[temp_mode].rows);
                         }
@@ -190,7 +183,7 @@ EFI_STATUS set_text_mode(void) {
 
                     } else if (current_row-1 >= menu_top) {
                         // De-highlight current row, move up 1 row, highlight new row
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
 
@@ -198,7 +191,7 @@ EFI_STATUS set_text_mode(void) {
                         current_row--;
                         cout->SetCursorPosition(cout, 0, current_row);
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
                     }
@@ -218,27 +211,27 @@ EFI_STATUS set_text_mode(void) {
 
                         // Print modes up until the last menu row
                         for (UINT32 i = 0; i < menu_len; i++, mode_index++) {
-                            printf(u"                    \r"    // Blank out mode text first
+                            printf_c16(u"                    \r"    // Blank out mode text first
                                    u"Mode %d: %dx%d\r\n", 
                                    mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
                         }
 
                         // Highlight last row
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
 
                     } else if (current_row+1 <= menu_bottom) {
                         // De-highlight current row, move down 1 row, highlight new row
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r\n", 
                                mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
 
                         mode_index++;
                         current_row++;
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, text_modes[mode_index].cols, text_modes[mode_index].rows);
                     }
@@ -302,7 +295,7 @@ EFI_STATUS set_graphics_mode(void) {
         cout->ClearScreen(cout);
 
         // Get current GOP mode information
-        printf(u"Graphics mode information:\r\n");
+        printf_c16(u"Graphics mode information:\r\n");
         status = gop->QueryMode(gop, 
                                 gop->Mode->Mode, 
                                 &mode_info_size, 
@@ -313,7 +306,7 @@ EFI_STATUS set_graphics_mode(void) {
             return status;
         }
 
-        printf(u"Max Mode: %d\r\n"
+        printf_c16(u"Max Mode: %d\r\n"
                u"Current Mode: %d\r\n"
                u"WidthxHeight: %ux%u\r\n"
                u"Framebuffer address: %x\r\n"
@@ -336,7 +329,7 @@ EFI_STATUS set_graphics_mode(void) {
 
         // Print keybinds at bottom of screen
         cout->SetCursorPosition(cout, 0, menu_bottom-3);
-        printf(u"Up/Down Arrow = Move Cursor\r\n"
+        printf_c16(u"Up/Down Arrow = Move Cursor\r\n"
                u"Enter = Select\r\n"
                u"Escape = Go Back");
 
@@ -361,12 +354,12 @@ EFI_STATUS set_graphics_mode(void) {
 
         // Highlight top menu row to start off
         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-        printf(u"Mode %d: %dx%d", 0, gop_modes[0].width, gop_modes[0].height);
+        printf_c16(u"Mode %d: %dx%d", 0, gop_modes[0].width, gop_modes[0].height);
 
         // Print other text mode infos
         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
         for (UINT32 i = 1; i < menu_len + 1; i++) 
-            printf(u"\r\nMode %d: %dx%d", i, gop_modes[i].width, gop_modes[i].height);
+            printf_c16(u"\r\nMode %d: %dx%d", i, gop_modes[i].width, gop_modes[i].height);
 
         // Get input from user 
         cout->SetCursorPosition(cout, 0, menu_top);
@@ -381,17 +374,17 @@ EFI_STATUS set_graphics_mode(void) {
                 case SCANCODE_UP_ARROW:
                     if (current_row == menu_top && mode_index > 0) {
                         // Scroll menu up by decrementing all modes by 1
-                        printf(u"                    \r");  // Blank out mode text first
+                        printf_c16(u"                    \r");  // Blank out mode text first
 
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
                         mode_index--;
-                        printf(u"Mode %d: %dx%d", 
+                        printf_c16(u"Mode %d: %dx%d", 
                                mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
 
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
                         UINTN temp_mode = mode_index + 1;
                         for (UINT32 i = 0; i < menu_len; i++, temp_mode++) {
-                            printf(u"\r\n                    \r"  // Blank out mode text first
+                            printf_c16(u"\r\n                    \r"  // Blank out mode text first
                                    u"Mode %d: %dx%d\r", 
                                    temp_mode, gop_modes[temp_mode].width, gop_modes[temp_mode].height);
                         }
@@ -401,7 +394,7 @@ EFI_STATUS set_graphics_mode(void) {
 
                     } else if (current_row-1 >= menu_top) {
                         // De-highlight current row, move up 1 row, highlight new row
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
 
@@ -409,7 +402,7 @@ EFI_STATUS set_graphics_mode(void) {
                         current_row--;
                         cout->SetCursorPosition(cout, 0, current_row);
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
                     }
@@ -429,27 +422,27 @@ EFI_STATUS set_graphics_mode(void) {
 
                         // Print modes up until the last menu row
                         for (UINT32 i = 0; i < menu_len; i++, mode_index++) {
-                            printf(u"                    \r"    // Blank out mode text first
+                            printf_c16(u"                    \r"    // Blank out mode text first
                                    u"Mode %d: %dx%d\r\n", 
                                    mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
                         }
 
                         // Highlight last row
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
 
                     } else if (current_row+1 <= menu_bottom) {
                         // De-highlight current row, move down 1 row, highlight new row
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r\n", 
                                mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
 
                         mode_index++;
                         current_row++;
                         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                        printf(u"                    \r"    // Blank out mode text first
+                        printf_c16(u"                    \r"    // Blank out mode text first
                                u"Mode %d: %dx%d\r", 
                                mode_index, gop_modes[mode_index].width, gop_modes[mode_index].height);
                     }
@@ -571,7 +564,7 @@ EFI_STATUS test_mouse(void) {
         spp[i]->Reset(spp[i], TRUE);
 
         // Print initial SPP mode info
-        printf(u"SPP %u; Resolution X: %u, Y: %u, Z: %u, LButton: %u, RButton: %u\r\n",
+        printf_c16(u"SPP %u; Resolution X: %u, Y: %u, Z: %u, LButton: %u, RButton: %u\r\n",
                i,
                spp[i]->Mode->ResolutionX, 
                spp[i]->Mode->ResolutionY,
@@ -604,7 +597,7 @@ EFI_STATUS test_mouse(void) {
     if (EFI_ERROR(status)) 
         error(status, u"Could not locate Absolute Pointer Protocol handle buffer.\r\n");
 
-    printf(u"\r\n");    // Separate SPP and APP info visually
+    printf_c16(u"\r\n");    // Separate SPP and APP info visually
 
     // Open all APP protocols for each handle
     for (UINTN i = 0; i < num_handles; i++) {
@@ -624,7 +617,7 @@ EFI_STATUS test_mouse(void) {
         app[i]->Reset(app[i], TRUE);
 
         // Print initial APP mode info
-        printf(u"APP %u; Min X: %u, Y: %u, Z: %u, Max X: %u, Y: %u, Z: %u, Attributes: %b\r\n",
+        printf_c16(u"APP %u; Min X: %u, Y: %u, Z: %u, Max X: %u, Y: %u, Z: %u, Attributes: %b\r\n",
                i,
                app[i]->Mode->AbsoluteMinX, 
                app[i]->Mode->AbsoluteMinY,
@@ -659,7 +652,7 @@ EFI_STATUS test_mouse(void) {
     cursor_y = (yres / 2) - (cursor_size / 2);
 
     // Print initial mouse state & draw initial cursor
-    printf(u"\r\nMouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
+    printf_c16(u"\r\nMouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
            cursor_x, cursor_y, 0, 0, 0);
 
     // Draw mouse cursor, and also save underlying FB data first
@@ -713,8 +706,8 @@ EFI_STATUS test_mouse(void) {
             if (state.RelativeMovementY > 0 && ymm_float == 0.0) ymm_float = 1.0;
 
             // Erase text first before reprinting
-            printf(u"                                                                      \r");
-            printf(u"Mouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
+            printf_c16(u"                                                                      \r");
+            printf_c16(u"Mouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
                   cursor_x, cursor_y, (INTN)xmm_float, (INTN)ymm_float, 
                   state.LeftButton, state.RightButton);
 
@@ -761,8 +754,8 @@ EFI_STATUS test_mouse(void) {
 
             // Print state values
             // Erase text first before reprinting
-            printf(u"                                                                      \r");
-            printf(u"Ptr Xpos: %u, Ypos: %u, Zpos: %u, Buttons: %b\r",
+            printf_c16(u"                                                                      \r");
+            printf_c16(u"Ptr Xpos: %u, Ypos: %u, Zpos: %u, Buttons: %b\r",
                   state.CurrentX, state.CurrentY, state.CurrentZ,
                   state.ActiveButtons);
 
@@ -829,13 +822,13 @@ VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
     cout->SetCursorPosition(cout, context.cols-20, context.rows-1);
 
     // Print current date/time
-    printf(u"%u-%c%u-%c%u %c%u:%c%u:%c%u",
-            time.Year, 
-            time.Month  < 10 ? u'0' : u'\0', time.Month,
-            time.Day    < 10 ? u'0' : u'\0', time.Day,
-            time.Hour   < 10 ? u'0' : u'\0', time.Hour,
-            time.Minute < 10 ? u'0' : u'\0', time.Minute,
-            time.Second < 10 ? u'0' : u'\0', time.Second);
+    printf_c16(u"%u-%c%u-%c%u %c%u:%c%u:%c%u",
+           time.Year, 
+           time.Month  < 10 ? u'0' : u'\0', time.Month,
+           time.Day    < 10 ? u'0' : u'\0', time.Day,
+           time.Hour   < 10 ? u'0' : u'\0', time.Hour,
+           time.Minute < 10 ? u'0' : u'\0', time.Minute,
+           time.Second < 10 ? u'0' : u'\0', time.Second);
 
     // Restore cursor position
     cout->SetCursorPosition(cout, save_col, save_row);
@@ -886,14 +879,14 @@ EFI_STATUS read_esp_files(void) {
 
     // Start at root directory
     CHAR16 current_directory[256];
-    strcpy_u16(current_directory, u"/");    
+    strcpy_c16(current_directory, u"/");    
 
     // Print dir entries for currently opened directory
     // Overall input loop
     INT32 csr_row = 1;
     while (true) {
         cout->ClearScreen(cout);
-        printf(u"%s:\r\n", current_directory);
+        printf_c16(u"%s:\r\n", current_directory);
 
         INT32 num_entries = 0;
         EFI_FILE_INFO file_info;
@@ -910,7 +903,7 @@ EFI_STATUS read_esp_files(void) {
                 cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
             }
 
-            printf(u"%s %s\r\n", 
+            printf_c16(u"%s %s\r\n", 
                    (file_info.Attribute & EFI_FILE_DIRECTORY) ? u"[DIR] " : u"[FILE]",
                    file_info.FileName);
 
@@ -986,9 +979,9 @@ EFI_STATUS read_esp_files(void) {
                         } else {
                             // Go into nested directory, add on to current string
                             if (current_directory[1] != u'\0') {
-                                strcat_u16(current_directory, u"/"); 
+                                strcat_c16(current_directory, u"/"); 
                             }
-                            strcat_u16(current_directory, file_info.FileName);
+                            strcat_c16(current_directory, file_info.FileName);
                         }
                         continue;   // Continue overall loop and print new directory entries
                     } 
@@ -1031,7 +1024,7 @@ EFI_STATUS read_esp_files(void) {
                     }
 
                     // Print buffer contents
-                    printf(u"\r\nFile Contents:\r\n");
+                    printf_c16(u"\r\nFile Contents:\r\n");
 
                     char *pos = (char *)buffer;
                     for (UINTN bytes = buf_size; bytes > 0; bytes--) {
@@ -1040,15 +1033,15 @@ EFI_STATUS read_esp_files(void) {
                         str[1] = u'\0';
                         if (*pos == '\n') {
                             // Convert LF newline to CRLF
-                            printf(u"\r\n");
+                            printf_c16(u"\r\n");
                         } else {
-                            printf(u"%s", str);
+                            printf_c16(u"%s", str);
                         }
 
                         pos++;
                     }
 
-                    printf(u"\r\n\r\nPress any key to continue...\r\n");
+                    printf_c16(u"\r\n\r\nPress any key to continue...\r\n");
                     get_key();
 
                     // Free memory for file when done
@@ -1150,7 +1143,7 @@ EFI_STATUS print_block_io_partitions(void) {
         // Print Block IO Media Info for this Disk/partition
         if (last_media_id != biop->Media->MediaId) {
             last_media_id = biop->Media->MediaId;   
-            printf(u"Media ID: %u %s\r\n", 
+            printf_c16(u"Media ID: %u %s\r\n", 
                    last_media_id, 
                    (last_media_id == this_image_media_id ? u"(Disk Image)" : u""));
         }
@@ -1164,7 +1157,7 @@ EFI_STATUS print_block_io_partitions(void) {
             continue;
         }
 
-        printf(u"Rmv: %s, Pr: %s, LglPrt: %s, RdOnly: %s, Wrt$: %s\r\n"
+        printf_c16(u"Rmv: %s, Pr: %s, LglPrt: %s, RdOnly: %s, Wrt$: %s\r\n"
                u"BlkSz: %u, IoAln: %u, LstBlk: %u, LwLBA: %u, LglBlkPerPhys: %u\r\n"
                u"OptTrnLenGran: %u\r\n",
                biop->Media->RemovableMedia   ? u"Y" : u"N",
@@ -1181,7 +1174,7 @@ EFI_STATUS print_block_io_partitions(void) {
                biop->Media->OptimalTransferLengthGranularity);
 
         // Print type of partition e.g. ESP or Data or Other
-        if (!biop->Media->LogicalPartition) printf(u"<Entire Disk>\r\n");
+        if (!biop->Media->LogicalPartition) printf_c16(u"<Entire Disk>\r\n");
         else {
             // Get partition info protocol for this partition
             EFI_GUID pi_guid = EFI_PARTITION_INFO_PROTOCOL_GUID;
@@ -1196,17 +1189,17 @@ EFI_STATUS print_block_io_partitions(void) {
             if (EFI_ERROR(status)) {
                 error(status, u"Could not Open Partition Info protocol on handle %u.\r\n", i);
             } else {
-                if      (pip->Type == PARTITION_TYPE_OTHER) printf(u"<Other Type>\r\n");
-                else if (pip->Type == PARTITION_TYPE_MBR)   printf(u"<MBR>\r\n");
+                if      (pip->Type == PARTITION_TYPE_OTHER) printf_c16(u"<Other Type>\r\n");
+                else if (pip->Type == PARTITION_TYPE_MBR)   printf_c16(u"<MBR>\r\n");
                 else if (pip->Type == PARTITION_TYPE_GPT) {
-                    if (pip->System == 1) printf(u"<EFI System Partition>\r\n");
+                    if (pip->System == 1) printf_c16(u"<EFI System Partition>\r\n");
                     else {
                         // Compare Gpt.PartitionTypeGUID with known values
                         EFI_GUID data_guid = BASIC_DATA_GUID;
                         if (!memcmp(&pip->Info.Gpt.PartitionTypeGUID, &data_guid, sizeof(EFI_GUID))) 
-                            printf(u"<Basic Data>\r\n");
+                            printf_c16(u"<Basic Data>\r\n");
                         else
-                            printf(u"<Other GPT Type>\r\n");
+                            printf_c16(u"<Other GPT Type>\r\n");
                     }
                 }
             }
@@ -1218,10 +1211,10 @@ EFI_STATUS print_block_io_partitions(void) {
                           image,
                           NULL);
 
-        printf(u"\r\n");    // Separate each block of text visually 
+        printf_c16(u"\r\n");    // Separate each block of text visually 
     }
 
-    printf(u"Press any key to go back..\r\n");
+    printf_c16(u"Press any key to go back..\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -1706,7 +1699,7 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;
     }
 
-    printf(u"Found kernel file\r\n");
+    printf_c16(u"Found kernel file\r\n");
 
     str_pos = strstr(file_buffer, "FILE_SIZE=");
     if (!str_pos) {
@@ -1726,7 +1719,7 @@ EFI_STATUS load_kernel(void) {
     str_pos += strlen("DISK_LBA=");
     UINTN disk_lba = atoi(str_pos);
 
-    printf(u"File Size: %u, Disk LBA: %u\r\n", file_size, disk_lba);
+    printf_c16(u"File Size: %u, Disk LBA: %u\r\n", file_size, disk_lba);
 
     // Read disk lbas for file into buffer
     disk_buffer = (VOID *)read_disk_lbas_to_buffer(disk_lba, file_size, image_mediaID, true);
@@ -1738,7 +1731,7 @@ EFI_STATUS load_kernel(void) {
 
     // Load Kernel File depending on format (initial header bytes)
     UINT8 *hdr = disk_buffer;
-    printf(u"Header bytes: [%hhx][%hhx][%hhx][%hhx]\r\n", 
+    printf_c16(u"Header bytes: [%hhx][%hhx][%hhx][%hhx]\r\n", 
            hdr[0], hdr[1], hdr[2], hdr[3]);
 
     EFI_PHYSICAL_ADDRESS kernel_buffer = 0;
@@ -1749,19 +1742,19 @@ EFI_STATUS load_kernel(void) {
     //   with a cast to (void **)
     Entry_Point entry_point = NULL;
 
-    printf(u"File Format: ");
+    printf_c16(u"File Format: ");
     if (!memcmp(hdr, (UINT8[4]){0x7F, 'E', 'L', 'F'}, 4)) {
-        printf(u"ELF\r\n");
+        printf_c16(u"ELF\r\n");
         print_elf_info(disk_buffer); // Print ELF header and loadable program header information
         *(void **)&entry_point = load_elf(disk_buffer, &kernel_buffer, &kernel_size);   
 
     } else if (!memcmp(hdr, (UINT8[2]){'M', 'Z'}, 2)) {
-        printf(u"PE\r\n");
+        printf_c16(u"PE\r\n");
         print_pe_info(disk_buffer); // Print PE header and loadable section header information
         *(void **)&entry_point = load_pe(disk_buffer, &kernel_buffer, &kernel_size); 
 
     } else {
-        printf(u"No format found, assuming flat binary file\r\n");
+        printf_c16(u"No format found, assuming flat binary file\r\n");
         // Flat binary executable code assumed to start at the beginning of the loaded buffer
         *(void **)&entry_point = disk_buffer;   
         kernel_buffer = (EFI_PHYSICAL_ADDRESS)disk_buffer;
@@ -1773,7 +1766,7 @@ EFI_STATUS load_kernel(void) {
     Entry_Point higher_entry_point = (Entry_Point)(KERNEL_START_ADDRESS + entry_offset);
 
     // Print info for loaded kernel 
-    printf(u"\r\nOriginal Kernel address: %x, size: %u, entry point: %x\r\n"
+    printf_c16(u"\r\nOriginal Kernel address: %x, size: %u, entry point: %x\r\n"
            u"Higher address entry point: %x\r\n",
             kernel_buffer, kernel_size, (UINTN)entry_point, higher_entry_point);
 
@@ -1784,7 +1777,7 @@ EFI_STATUS load_kernel(void) {
     }
 
     if (!autoload_kernel) {
-        printf(u"\r\nPress any key to load kernel...\r\n");
+        printf_c16(u"\r\nPress any key to load kernel...\r\n");
         get_key();
     }
 
@@ -1792,18 +1785,42 @@ EFI_STATUS load_kernel(void) {
     bs->CloseEvent(timer_event);
 
     // Initialize Kernel Parameters
-    // TODO: Use largest found WxH GOP mode instead of default mode on 
-    //   boot or current user chosen mode.
-    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    bool set_mode = false;
+    if (autoload_kernel) {
+        // Set gop mode from width & height values in install data file
+        CHAR16 *install_file = u"\\EFI\\BOOT\\INSTALL.DAT";
+        UINTN buf_size = 0;
+        VOID *inst_file_buf = read_esp_file_to_buffer(install_file, &buf_size);
+        if (!inst_file_buf) goto gop_done;
 
-    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+        char *str_pos = stpstr(inst_file_buf, "XRES=");
+        if (!str_pos) goto gop_done;
+        UINT32 xres = atoi(str_pos);
+
+        str_pos = stpstr(str_pos, "YRES=");
+        if (!str_pos) goto gop_done;
+        UINT32 yres = atoi(str_pos);
+
+        bs->FreePool(inst_file_buf);
+
+        status = set_gop_mode(&gop, xres, yres); 
+        set_mode = !EFI_ERROR(status);
+    } 
+
+    gop_done:
+    if (!set_mode) {
+        status = set_gop_mode(&gop, 1920, 1080);    // Try 1080p as default
+        if (EFI_ERROR(status))
+            status = set_largest_gop_mode(&gop);    // Try largest WxH mode found
+    }
+
     if (EFI_ERROR(status)) {
-        error(status, u"Could not locate GOP! :(\r\n");
+        error(status, u"Could not set GOP mode for kernel.\r\n");
         goto cleanup;
     }
 
-    kparms.gop_mode = *gop->Mode,
+    kparms.gop_mode = *gop->Mode;
 
     // Allocate buffer for kernel bitmap fonts
     kparms.num_fonts = 2;
@@ -2005,7 +2022,7 @@ EFI_STATUS load_kernel(void) {
         bs->FreePool(kparms.fonts);   // Free memory for kparms fonts array
     }
 
-    printf(u"\r\nPress any key to go back...\r\n");
+    printf_c16(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -2023,7 +2040,7 @@ EFI_STATUS print_memory_map(void) {
     get_memory_map(&mmap);
 
     // Print memory map descriptor values
-    printf(u"Memory map: Size %u, Descriptor size: %u, # of descriptors: %u, key: %x\r\n",
+    printf_c16(u"Memory map: Size %u, Descriptor size: %u, # of descriptors: %u, key: %x\r\n",
             mmap.size, mmap.desc_size, mmap.size / mmap.desc_size, mmap.key);
 
     UINTN usable_bytes = 0; // "Usable" memory for an OS or similar, not firmware/device reserved
@@ -2031,7 +2048,7 @@ EFI_STATUS print_memory_map(void) {
         EFI_MEMORY_DESCRIPTOR *desc = 
             (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap.map + (i * mmap.desc_size));
 
-        printf(u"%u: Typ: %u, Phy: %x, Vrt: %x, Pgs: %u, Att: %x\r\n",
+        printf_c16(u"%u: Typ: %u, Phy: %x, Vrt: %x, Pgs: %u, Att: %x\r\n",
                 i,
                 desc->Type, 
                 desc->PhysicalStart, 
@@ -2052,19 +2069,19 @@ EFI_STATUS print_memory_map(void) {
 
         // Pause if reached bottom of screen
         if (cout->Mode->CursorRow >= text_rows-2) {
-            printf(u"Press any key to continue...\r\n");
+            printf_c16(u"Press any key to continue...\r\n");
             get_key();
             cout->ClearScreen(cout);
         }
     }
 
-    printf(u"\r\nUsable memory: %u / %u MiB / %u GiB\r\n",
+    printf_c16(u"\r\nUsable memory: %u / %u MiB / %u GiB\r\n",
             usable_bytes, usable_bytes / (1024 * 1024), usable_bytes / (1024 * 1024 * 1024));
 
     // Free allocated buffer for memory map
     bs->FreePool(mmap.map);
 
-    printf(u"\r\nPress any key to go back...\r\n");
+    printf_c16(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -2078,7 +2095,7 @@ EFI_STATUS print_config_tables(void) {
     // Close Timer Event for cleanup
     bs->CloseEvent(timer_event);
 
-    printf(u"Configuration Table GUIDs:\r\n");
+    printf_c16(u"Configuration Table GUIDs:\r\n");
     for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
         EFI_GUID guid = st->ConfigurationTable[i].VendorGuid;
         print_guid(guid);
@@ -2092,18 +2109,18 @@ EFI_STATUS print_config_tables(void) {
                 break;
             }
         }
-        printf(u"(%s)\r\n\r\n", 
+        printf_c16(u"(%s)\r\n\r\n", 
                found ? config_table_guids_and_strings[j].string : u"Unknown GUID Value");
 
         // Pause at bottom of screen
         if (cout->Mode->CursorRow >= text_rows-2) {
-            printf(u"Press any key to continue...\r\n");
+            printf_c16(u"Press any key to continue...\r\n");
             get_key();
             cout->ClearScreen(cout);
         }
     }
 
-    printf(u"\r\nPress any key to go back...\r\n");
+    printf_c16(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -2122,14 +2139,14 @@ EFI_STATUS print_acpi_tables(void) {
     VOID *rsdp_ptr = get_config_table_by_guid(acpi_guid);
     bool acpi_20 = false;
     if (rsdp_ptr) {
-        printf(u"ACPI 2.0 Table found at %#x\r\n", rsdp_ptr);
+        printf_c16(u"ACPI 2.0 Table found at %#x\r\n", rsdp_ptr);
         acpi_20 = true;
     } else {
         // Check for ACPI 1.0 table as fallback
         acpi_guid = (EFI_GUID)ACPI_TABLE_GUID;
         rsdp_ptr = get_config_table_by_guid(acpi_guid);
         if (rsdp_ptr) {
-            printf(u"ACPI 1.0 Table found at %#x\r\n", rsdp_ptr);
+            printf_c16(u"ACPI 1.0 Table found at %#x\r\n", rsdp_ptr);
         } else {
             error(0, u"Could not find ACPI configuration table\r\n");
             return 1;
@@ -2138,7 +2155,7 @@ EFI_STATUS print_acpi_tables(void) {
 
     // Print RSDP
     UINT8 *rsdp = rsdp_ptr;
-    printf(u"RSDP:\r\n"
+    printf_c16(u"RSDP:\r\n"
            u"Signature: %.8hhs\r\n"
            u"Checksum: %hhu\r\n"
            u"OEMID: %.6hhs\r\n"
@@ -2151,7 +2168,7 @@ EFI_STATUS print_acpi_tables(void) {
            *(UINT32 *)&rsdp[16]);
 
     if (acpi_20) {
-        printf(u"Length: %u\r\n"
+        printf_c16(u"Length: %u\r\n"
                u"XSDT Address: %x\r\n"
                u"Extended Checksum: %hhu\r\n",
                *(UINT32 *)&rsdp[20],
@@ -2159,7 +2176,7 @@ EFI_STATUS print_acpi_tables(void) {
                rsdp[32]);
     } 
 
-    printf(u"\r\nPress any key to print RSDT/XSDT...\r\n");
+    printf_c16(u"\r\nPress any key to print RSDT/XSDT...\r\n");
     get_key();
 
     // Uncomment this line to use RSDT instead of XSDT
@@ -2173,24 +2190,24 @@ EFI_STATUS print_acpi_tables(void) {
         print_acpi_table_header(*header);
 
         // Print XSDT entry signatures
-        printf(u"\r\nPress any key to print entries...\r\n");
+        printf_c16(u"\r\nPress any key to print entries...\r\n");
         get_key();
 
         cout->ClearScreen(cout);
-        printf(u"Entries:\r\n");
+        printf_c16(u"Entries:\r\n");
         UINT64 *entry = (UINT64 *)((UINT8 *)header + sizeof *header); 
         for (UINTN i = 0; i < (header->length - sizeof *header) / 8; i++) {
             ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)entry[i];
-            printf(u"%.4hhs\r\n", &table_header.signature[0]);
+            printf_c16(u"%.4hhs\r\n", &table_header.signature[0]);
 
             if (cout->Mode->CursorRow >= text_rows-2) {
-                printf(u"Press any key to continue...\r\n");
+                printf_c16(u"Press any key to continue...\r\n");
                 get_key();
                 cout->ClearScreen(cout);
             }
         }
 
-        printf(u"\r\nPress any key to print next table...\r\n");
+        printf_c16(u"\r\nPress any key to print next table...\r\n");
         get_key();
 
         // Loop and print each ACPI table
@@ -2203,7 +2220,7 @@ EFI_STATUS print_acpi_tables(void) {
 
             // TODO: Print specific table info ?
 
-            printf(u"\r\nPress any key to print next table...\r\n");
+            printf_c16(u"\r\nPress any key to print next table...\r\n");
             get_key();
         }
 
@@ -2217,24 +2234,24 @@ EFI_STATUS print_acpi_tables(void) {
         print_acpi_table_header(*header);
 
         // Print RSDT entry signatures
-        printf(u"\r\nPress any key to print entries...\r\n");
+        printf_c16(u"\r\nPress any key to print entries...\r\n");
         get_key();
 
         cout->ClearScreen(cout);
-        printf(u"Entries:\r\n");
+        printf_c16(u"Entries:\r\n");
         UINT32 *entry = (UINT32 *)((UINT8 *)header + sizeof *header); 
         for (UINTN i = 0; i < (header->length - sizeof *header) / 4; i++) {
             ACPI_TABLE_HEADER table_header = *(ACPI_TABLE_HEADER *)(UINTN)entry[i];
-            printf(u"%.4hhs\r\n", &table_header.signature[0]);
+            printf_c16(u"%.4hhs\r\n", &table_header.signature[0]);
 
             if (cout->Mode->CursorRow >= text_rows-2) {
-                printf(u"Press any key to continue...\r\n");
+                printf_c16(u"Press any key to continue...\r\n");
                 get_key();
                 cout->ClearScreen(cout);
             }
         }
 
-        printf(u"\r\nPress any key to print next table...\r\n");
+        printf_c16(u"\r\nPress any key to print next table...\r\n");
         get_key();
 
         // Loop and print each ACPI table
@@ -2247,12 +2264,12 @@ EFI_STATUS print_acpi_tables(void) {
 
             // TODO: Print specific table info ?
 
-            printf(u"\r\nPress any key to print next table...\r\n");
+            printf_c16(u"\r\nPress any key to print next table...\r\n");
             get_key();
         }
     }
 
-    printf(u"\r\nPress any key to go back...\r\n");
+    printf_c16(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -2294,7 +2311,7 @@ EFI_STATUS print_efi_global_variables(void) {
                 return status;
             }
             
-            strcpy_u16(temp_buf, var_name_buf);  // Copy old buffer to new buffer
+            strcpy_c16(temp_buf, var_name_buf);  // Copy old buffer to new buffer
             bs->FreePool(var_name_buf);          // Free old buffer
             var_name_buf = temp_buf;             // Set new buffer
 
@@ -2303,11 +2320,11 @@ EFI_STATUS print_efi_global_variables(void) {
         }
 
         // Print variable name
-        printf(u"%.*s\r\n", var_name_size, var_name_buf);
+        printf_c16(u"%.*s\r\n", var_name_size, var_name_buf);
 
         // Pause at bottom of screen
         if (cout->Mode->CursorRow >= text_rows-2) {
-            printf(u"Press any key to continue...\r\n");
+            printf_c16(u"Press any key to continue...\r\n");
             get_key();
             cout->ClearScreen(cout);
         }
@@ -2317,7 +2334,7 @@ EFI_STATUS print_efi_global_variables(void) {
     // Free buffer when done
     bs->FreePool(var_name_buf);
 
-    printf(u"\r\nPress any key to go back...\r\n");
+    printf_c16(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -2371,7 +2388,7 @@ EFI_STATUS change_boot_variables(void) {
                     return status;
                 }
                 
-                strcpy_u16(temp_buf, var_name_buf);  // Copy old buffer to new buffer
+                strcpy_c16(temp_buf, var_name_buf);  // Copy old buffer to new buffer
                 bs->FreePool(var_name_buf);          // Free old buffer
                 var_name_buf = temp_buf;             // Set new buffer
 
@@ -2381,7 +2398,7 @@ EFI_STATUS change_boot_variables(void) {
 
             // Print variable name and their value(s)
             if (!memcmp(var_name_buf, u"Boot", 8)) {
-                printf(u"\r\n%.*s: ", var_name_size, var_name_buf);
+                printf_c16(u"\r\n%.*s: ", var_name_size, var_name_buf);
 
                 // Get variable value
                 UINT32 attributes = 0;
@@ -2409,16 +2426,16 @@ EFI_STATUS change_boot_variables(void) {
                     UINT16 *p = data;
 
                     for (UINTN i = 0; i < data_size / 2; i++)
-                        printf(u"%#.4x,", *p++);   
+                        printf_c16(u"%#.4x,", *p++);   
 
-                    printf(u"\r\n");
+                    printf_c16(u"\r\n");
                     goto next;
                 }
 
                 if (!memcmp(var_name_buf, u"BootOptionSupport", 34)) {
                     // Single UINT32 value
                     UINT32 *p = data;
-                    printf(u"%#.8x\r\n", *p);  
+                    printf_c16(u"%#.8x\r\n", *p);  
                     goto next;
                 }
 
@@ -2427,7 +2444,7 @@ EFI_STATUS change_boot_variables(void) {
 
                     // Single UINT16 value
                     UINT16 *p = data;
-                    printf(u"%#.4hx\r\n", *p); 
+                    printf_c16(u"%#.4hx\r\n", *p); 
                     goto next;
                 }
 
@@ -2435,7 +2452,7 @@ EFI_STATUS change_boot_variables(void) {
                     // Boot#### load option: Name size = 8 CHAR16 chars * 2 bytes + CHAR16 null bytes
                     EFI_LOAD_OPTION *load_option = (EFI_LOAD_OPTION *)data;
                     CHAR16 *description = (CHAR16 *)((UINT8 *)data + sizeof(UINT32) + sizeof(UINT16));
-                    printf(u"%s\r\n", description);    
+                    printf_c16(u"%s\r\n", description);    
 
                     CHAR16 *p = description;
                     UINTN strlen =  0;
@@ -2448,22 +2465,22 @@ EFI_STATUS change_boot_variables(void) {
                     CHAR16 *device_path_text = 
                         dpttp->ConvertDevicePathToText(file_path_list, FALSE, FALSE);
 
-                    printf(u"Device Path: %s\r\n", device_path_text ? device_path_text : u"(null)");
+                    printf_c16(u"Device Path: %s\r\n", device_path_text ? device_path_text : u"(null)");
 
                     UINT8 *optional_data = (UINT8 *)file_path_list + load_option->FilePathListLength;
                     UINTN optional_data_size = data_size - (optional_data - (UINT8 *)data);
                     if (optional_data_size > 0) {
-                        printf(u"Optional Data: 0x");
+                        printf_c16(u"Optional Data: 0x");
                         for (UINTN i = 0; i < optional_data_size; i++)
-                            printf(u"%.2hhx", optional_data[i]);
+                            printf_c16(u"%.2hhx", optional_data[i]);
 
-                        printf(u"\r\n"); 
+                        printf_c16(u"\r\n"); 
                     }
                     
                     goto next; 
                 }
 
-                printf(u"\r\n");  // Unhandled Boot* variable, go on with space before next one
+                printf_c16(u"\r\n");  // Unhandled Boot* variable, go on with space before next one
 
                 next:
                 bs->FreePool(data);
@@ -2471,7 +2488,7 @@ EFI_STATUS change_boot_variables(void) {
 
             // Pause at bottom of screen
             if (cout->Mode->CursorRow >= text_rows-2) {
-                printf(u"Press any key to continue...\r\n");
+                printf_c16(u"Press any key to continue...\r\n");
                 get_key();
                 cout->ClearScreen(cout);
             }
@@ -2479,7 +2496,7 @@ EFI_STATUS change_boot_variables(void) {
         }
 
         // Allow user to change values
-        printf(u"Press '1' to change BootOrder, '2' to change BootNext, or other to go back...");
+        printf_c16(u"Press '1' to change BootOrder, '2' to change BootNext, or other to go back...");
         EFI_INPUT_KEY key = get_key();
         if (key.UnicodeChar == u'1') {
             // Change BootOrder - set new array of UINT16 values
@@ -2488,7 +2505,7 @@ EFI_STATUS change_boot_variables(void) {
             UINTN new_option = 0;
             UINT16 num_options = 0;
             for (UINTN i = 0; i < MAX_BOOT_OPTIONS; i++) {
-                printf(u"\r\nBoot Option %u (0000-FFFF): ", i+1);
+                printf_c16(u"\r\nBoot Option %u (0000-FFFF): ", i+1);
                 if (!get_num(&new_option, 16)) break;    // Stop processing
                 option_array[num_options++] = new_option; 
             }
@@ -2504,7 +2521,7 @@ EFI_STATUS change_boot_variables(void) {
 
         } else if (key.UnicodeChar == u'2') {
             // Change BootNext value - set new UINT16
-            printf(u"\r\nBootNext value (0000-FFFF): ");
+            printf_c16(u"\r\nBootNext value (0000-FFFF): ");
             UINTN value = 0;
             if (get_num(&value, 16)) {
                 EFI_GUID guid = EFI_GLOBAL_VARIABLE_GUID;
@@ -2538,7 +2555,7 @@ EFI_STATUS install_to_disk(void) {
     EFI_STATUS status = EFI_SUCCESS;
 
     CHAR16 *path = u"\\EFI\\BOOT\\INSTALL.DAT";
-    printf(u"\r\nInstall to disk by writing file '%s' (Y/N)?  ", path);
+    printf_c16(u"\r\nInstall to disk by writing file '%s' (Y/N)?  ", path);
 
     bool yes = false, no = false;
     EFI_INPUT_KEY key = get_key();
@@ -2546,16 +2563,16 @@ EFI_STATUS install_to_disk(void) {
         yes = no = false;
         yes = (key.UnicodeChar == 'Y' || key.UnicodeChar == 'y');
         no  = (key.UnicodeChar == 'N' || key.UnicodeChar == 'n');
-        if (yes || no) printf(u"\b%c", key.UnicodeChar);    // Overwrite character at same position
+        if (yes || no) printf_c16(u"\b%c", key.UnicodeChar);    // Overwrite character at same position
         key = get_key();
     }
-    printf(u"\r\n");
+    printf_c16(u"\r\n");
 
     if (yes) {
         EFI_FILE_PROTOCOL *root = esp_root_dir();
         if (!root) {
             error(0, u"Could not get ESP root directory.\r\n");
-            return 1;
+            return EFI_UNSUPPORTED;
         }
 
         // Create new empty file, flags must be Create+Read+Write
@@ -2566,17 +2583,53 @@ EFI_STATUS install_to_disk(void) {
                             EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
                             0);
 
-        if (EFI_ERROR(status)) 
+        if (EFI_ERROR(status)) {
             error(status, u"Could not create new file '%s'\r\n", path);
-        else {
-            printf(u"\r\nFile '%s' written.\r\n"
-                   u"Next boot will automatically load the kernel and not the main menu.\r\n"
-                   u"Press any key to go on...\r\n\r\n",
-                   path);
-            get_key();
+            goto cleanup;
         }
 
+        // Get info for desired GOP Framebuffer WidthxHeight values
+        UINTN fb_width = 0, fb_height = 0;
+        UINT32 mode_num = 0;
+        while (true) {
+            printf_c16(u"Desired Framebuffer Width (number, default = 1920)? ");
+            get_num(&fb_width, 10);
+            if (fb_width == 0) fb_width = 1920;
+
+            printf_c16(u"\r\nFramebuffer Height (number, default = 1080)? ");
+            get_num(&fb_height, 10);
+            if (fb_height == 0) fb_height = 1080;
+            
+            if (!EFI_ERROR(check_gop_mode(&mode_num, fb_width, fb_height)))
+                break;
+
+            printf_c16(u"\r\nGOP Mode not found for WidthxHeight.\r\n");
+        }
+
+        // Write GOP mode & values to file
+        char buf[512];
+        sprintf(buf, "GOP_MODE=%u\r\n"
+                     "XRES=%u\r\n"
+                     "YRES=%u\r\n",
+                     mode_num,
+                     fb_width,
+                     fb_height);
+                
+        UINTN buf_size = strlen(buf);
+        status = file->Write(file, &buf_size, buf);
+        if (EFI_ERROR(status)) {
+            error(status, u"Issue writing GOP info to file '%s'.\r\n", path);
+            goto cleanup;
+        }
+
+        printf_c16(u"\r\n\r\nFile '%s' written.\r\n"
+               u"Next boot will automatically load the kernel and not the main menu.\r\n"
+               u"Press any key to go on...\r\n\r\n",
+               path);
+        get_key();
+
         // Cleanup file/directory pointers
+        cleanup:
         if (file) file->Close(file);
         if (root) root->Close(root);
     }
@@ -2659,7 +2712,7 @@ EFI_STATUS write_to_another_disk(void) {
         // Print Block IO Media Info for this Disk/partition
         if (last_media_id != biop->Media->MediaId) {
             last_media_id = biop->Media->MediaId;   
-            printf(u"Media ID: %u %s\r\n", 
+            printf_c16(u"Media ID: %u %s\r\n", 
                    last_media_id, 
                    (last_media_id == disk_image_media_id ? u"(Disk Image)" : u""));
 
@@ -2670,24 +2723,24 @@ EFI_STATUS write_to_another_disk(void) {
         // Get disk size in bytes, add 1 block for 0-based indexing fun
         UINTN size = (biop->Media->LastBlock+1) * biop->Media->BlockSize; 
 
-        printf(u"Rmv: %s, Size: %llu/%llu MiB/%llu GiB\r\n",
+        printf_c16(u"Rmv: %s, Size: %llu/%llu MiB/%llu GiB\r\n",
                biop->Media->RemovableMedia ? u"Yes" : u"No",
                size, size / (1024 * 1024), size / (1024 * 1024 * 1024));
 
         if (biop->Media->MediaId == disk_image_media_id) {
-            printf(u"Disk image size: %llu/%llu MiB/%llu GiB\r\n",
+            printf_c16(u"Disk image size: %llu/%llu MiB/%llu GiB\r\n",
                    disk_image_size, 
                    disk_image_size / (1024 * 1024), 
                    disk_image_size / (1024 * 1024 * 1024));
         }
-        printf(u"\r\n");
+        printf_c16(u"\r\n");
     }
 
     // Take in a number from the user for the media to write the disk image to
-    printf(u"Input Media ID number to write to and press enter: ");
+    printf_c16(u"Input Media ID number to write to and press enter: ");
     UINTN chosen_media = 0;
     get_num(&chosen_media, 10);
-    printf(u"\r\n");
+    printf_c16(u"\r\n");
 
     // Get Block IO for chosen disk media
     bool found = false;
@@ -2727,7 +2780,7 @@ EFI_STATUS write_to_another_disk(void) {
     UINTN from_blocks = (disk_image_size + (from_block_size-1)) / from_block_size;
     UINTN to_blocks = (disk_image_size + (to_block_size-1)) / to_block_size;
 
-    printf(u"From block size: %u, To block size: %u\r\n"
+    printf_c16(u"From block size: %u, To block size: %u\r\n"
            u"From blocks: %u, To blocks: %u\r\n",
            from_block_size, to_block_size,
            from_blocks, to_blocks);
@@ -2741,7 +2794,7 @@ EFI_STATUS write_to_another_disk(void) {
     }
 
     // Read Blocks from disk image media to buffer
-    printf(u"Reading %u blocks from disk image disk to buffer...\r\n", from_blocks);
+    printf_c16(u"Reading %u blocks from disk image disk to buffer...\r\n", from_blocks);
     status = disk_image_bio->ReadBlocks(disk_image_bio,
                                         disk_image_media_id,
                                         0,
@@ -2753,7 +2806,7 @@ EFI_STATUS write_to_another_disk(void) {
     }
 
     // Write Blocks from buffer to chosen media disk 
-    printf(u"Writing %u blocks from buffer to chosen disk...\r\n", to_blocks);
+    printf_c16(u"Writing %u blocks from buffer to chosen disk...\r\n", to_blocks);
     status = chosen_disk_bio->WriteBlocks(chosen_disk_bio,
                                           chosen_media,
                                           0,
@@ -2767,10 +2820,10 @@ EFI_STATUS write_to_another_disk(void) {
     // Cleanup
     bs->FreePool(image_buffer);
 
-    printf(u"\r\nDisk Image written to chosen disk.\r\n"
+    printf_c16(u"\r\nDisk Image written to chosen disk.\r\n"
            u"Reboot and choose new boot option when able.\r\n");
 
-    printf(u"\r\nPress any key to go back...\r\n");
+    printf_c16(u"\r\nPress any key to go back...\r\n");
     get_key();
     return EFI_SUCCESS;
 }
@@ -2883,7 +2936,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
         // Print keybinds at bottom of screen
         cout->SetCursorPosition(cout, 0, rows-3);
-        printf(u"Up/Down Arrow = Move cursor\r\n"
+        printf_c16(u"Up/Down Arrow = Move cursor\r\n"
                u"Enter = Select\r\n"
                u"Escape = Shutdown");
 
@@ -2891,12 +2944,12 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         // Highlight first choice as initial choice
         cout->SetCursorPosition(cout, 0, 0);
         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-        printf(u"%s", menu_choices[0]);
+        printf_c16(u"%s", menu_choices[0]);
 
         // Print rest of choices
         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
         for (UINTN i = 1; i < ARRAY_SIZE(menu_choices); i++)
-            printf(u"\r\n%s", menu_choices[i]);
+            printf_c16(u"\r\n%s", menu_choices[i]);
 
         // Get cursor row boundaries
         INTN min_row = 0, max_row = cout->Mode->CursorRow;
@@ -2913,7 +2966,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 case SCANCODE_UP_ARROW:
                     // De-highlight current row, move up 1 row, highlight new row
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                    printf(u"%s\r", menu_choices[current_row]);
+                    printf_c16(u"%s\r", menu_choices[current_row]);
 
                     if (current_row-1 >= min_row)  
                         current_row--;          // Go up one row
@@ -2922,7 +2975,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
                     cout->SetCursorPosition(cout, 0, current_row);
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                    printf(u"%s\r", menu_choices[current_row]);
+                    printf_c16(u"%s\r", menu_choices[current_row]);
 
                     // Reset colors
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
@@ -2931,7 +2984,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 case SCANCODE_DOWN_ARROW:
                     // De-highlight current row, move down 1 row, highlight new row
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                    printf(u"%s\r", menu_choices[current_row]);
+                    printf_c16(u"%s\r", menu_choices[current_row]);
 
                     if (current_row+1 <= max_row) 
                         current_row++;          // Go down one row
@@ -2940,7 +2993,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
                     cout->SetCursorPosition(cout, 0, current_row);
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                    printf(u"%s\r", menu_choices[current_row]);
+                    printf_c16(u"%s\r", menu_choices[current_row]);
 
                     // Reset colors
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));

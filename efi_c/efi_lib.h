@@ -10,6 +10,15 @@
 
 #include "efi.h"
 
+// -----------------
+// Global macros
+// -----------------
+#define ARRAY_SIZE(x) (sizeof (x) / sizeof (x)[0])
+#define max(x, y) ((x) > (y) ? (x) : (y))
+
+// -----------------
+// Global constants
+// -----------------
 #define PAGE_SIZE 4096  // 4KiB
 
 // ELF Header - x86_64
@@ -413,6 +422,26 @@ char *strstr(char *haystack, char *needle) {
     return NULL;
 }
 
+// ======================================================================
+// (ASCII) stpstr:
+// Return a pointer to the terminating NULL byte of found substring,
+//   or NULL if the substring is not found.
+//   If needle is the empty string, the return value is always haystack
+//   itself.
+// ======================================================================
+char *stpstr(char *haystack, char *needle) {
+    if (!needle) return haystack;
+
+    char *p = haystack;
+    while (*p) {
+        if (*p == *needle && !memcmp(p, needle, strlen(needle))) 
+            return p + strlen(needle);
+        p++;
+    }
+
+    return NULL;
+}
+
 // =====================================================================
 // (ASCII) isdigit:
 // Returns: true/1 if char c >= 0 and <= 9, else 0/false
@@ -441,6 +470,24 @@ BOOLEAN isxdigit_c16(CHAR16 c) {
            (c >= u'A' && c <= u'F');
 }
 
+// ======================================================
+// (ASCII) strrev:
+//  Reverse a string.
+//  Returns reversed string.
+// ======================================================
+char *strrev(char *s) {
+    if (!s) return s;
+
+    char *start = s, *end = s + strlen(s)-1;
+    while (start < end) {
+        char temp = *end;  // Swap
+        *end-- = *start;
+        *start++ = temp;
+    }
+
+    return s;
+}
+
 // =============================================
 // (ASCII) atoi: 
 // Converts intial value of input string to 
@@ -455,14 +502,34 @@ INTN atoi(char *s) {
     return result;
 }
 
-// ================================
-// CHAR16 strcpy:
+// ======================================================
+// (ASCII) itoa:
+//  Convert integer to string representation.
+//  Returns input string.
+// ======================================================
+char *itoa(int32_t number, char *s, uint8_t base) {
+    char *p = s;
+    uint8_t digit = 0;
+    do {
+        digit = number % base;
+        if (digit < 10) *s++ = digit + '0';
+        else            *s++ = 'A' + digit - 10;
+        number /= base;
+    } while (number > 0);
+
+    *s = '\0';
+    strrev(p);
+
+    return p;
+}
+
+// ============================
+// (CHAR16) strcpy:
 //   Copy src string into dst 
 //   Returns dst
-// ================================
-CHAR16 *strcpy_u16(CHAR16 *dst, CHAR16 *src) {
-    if (!dst) return NULL;
-    if (!src) return dst;
+// ============================
+CHAR16 *strcpy_c16(CHAR16 *dst, CHAR16 *src) {
+    if (!dst || !src) return dst;
 
     CHAR16 *result = dst;
     while (*src) *dst++ = *src++;
@@ -470,6 +537,36 @@ CHAR16 *strcpy_u16(CHAR16 *dst, CHAR16 *src) {
     *dst = u'\0';   // Null terminate
 
     return result;
+}
+
+// ============================
+// (ASCII) strcpy:
+//   Copy src string into dst 
+//   Returns dst
+// ============================
+char *strcpy(char *dst, char *src) {
+    if (!dst || !src) return dst;
+
+    char *result = dst;
+    while (*src) *dst++ = *src++;
+
+    *dst = u'\0';   // Null terminate
+
+    return result;
+}
+
+// ======================================================
+// (ASCII) stpcpy:
+//  Copy src string into dst, end with NULL terminator.
+//  Returns pointer to null terminator of dst
+// ======================================================
+char *stpcpy(char *dst, char *src) {
+    if (!dst || !src) return dst;
+
+    while (*src) *dst++ = *src++;
+
+    *dst = u'\0';  
+    return dst;
 }
 
 // ================================
@@ -490,10 +587,10 @@ INTN strncmp_u16(CHAR16 *s1, CHAR16 *s2, UINTN len) {
     return *s1 - *s2;
 }
 
-// ================================
+// ==============================================
 // CHAR16 strrchr:
-//   Return last occurrence of C in string
-// ================================
+//   Return last occurrence of char c in string
+// ==============================================
 CHAR16 *strrchr_u16(CHAR16 *str, CHAR16 c) {
     CHAR16 *result = NULL;
 
@@ -511,7 +608,7 @@ CHAR16 *strrchr_u16(CHAR16 *str, CHAR16 c) {
 //   dst's original null terminator position.
 //  Returns dst
 // ================================
-CHAR16 *strcat_u16(CHAR16 *dst, CHAR16 *src) {
+CHAR16 *strcat_c16(CHAR16 *dst, CHAR16 *src) {
     CHAR16 *s = dst;
 
     while (*s) s++;             // Go until null terminator
@@ -521,6 +618,36 @@ CHAR16 *strcat_u16(CHAR16 *dst, CHAR16 *src) {
     *s = u'\0';                 // Null terminate new string
 
     return dst; 
+}
+
+// ================================
+// (ASCII) strcat:
+//   Concatenate src string onto the end of dst string, at
+//   dst's original null terminator position.
+//  Returns dst
+// ================================
+char *strcat(char *dst, char *src) {
+    char *s = dst + strlen(dst);
+
+    while (*src) *s++ = *src++; // Copy src to dst at null position
+    *s = '\0';                  // Null terminate 
+
+    return dst; 
+}
+
+// =========================================================
+// (ASCII) stpcat:
+//   Concatenate src string onto the end of dst string, at
+//   dst's original null terminator position.
+//  Returns pointer to null terminator of dst.
+// =========================================================
+char *stpcat(char *dst, char *src) {
+    char *s = dst + strlen(dst);
+
+    while (*src) *s++ = *src++; // Copy src to dst at null position
+    *s = '\0';                  // Null terminate 
+
+    return s;
 }
 
 // ===================================================================
@@ -557,12 +684,12 @@ VOID *get_config_table_by_guid(EFI_GUID guid) {
     return NULL;    // Did not find config table
 }
 
-// =================================
-// Add integer as string to buffer
-// =================================
+// ==========================================
+// (CHAR16) Add integer as string to buffer
+// ==========================================
 BOOLEAN
-add_int_to_buf(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digits, CHAR16 *buf, 
-               UINTN *buf_idx) {
+add_int_to_buf_c16(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digits, CHAR16 *buf, 
+                   UINTN *buf_idx) {
     const CHAR16 *digits = u"0123456789ABCDEF";
     CHAR16 buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
     UINTN i = 0;
@@ -608,17 +735,14 @@ add_int_to_buf(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digits, C
     return TRUE;
 }
 
-// ===================================================================
-// Print formatted strings to stdout, using a va_list for arguments
-// ===================================================================
-bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args) {
+// ========================================================================
+// (CHAR16) Fill formatted string buffer with printf() format conversions
+// ========================================================================
+bool format_string_c16(CHAR16 *buf, CHAR16 *fmt, va_list args) {
     bool result = true;
     CHAR16 charstr[2] = {0};    
-
-    CHAR16 buf[1024];   // Format string buffer for % strings
     UINTN buf_idx = 0;
-    
-    // Print formatted string values
+
     for (UINTN i = 0; fmt[i] != u'\0'; i++) {
         if (fmt[i] == u'%') {
             bool alternate_form = false;
@@ -636,10 +760,6 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
             bool plus_flag    = false;
             CHAR16 padding_char = ' ';  // '0' or ' ' depending on flags
             i++;
-
-            // Initialize format string buffer
-            memset(buf, 0, sizeof buf);
-            buf_idx = 0;
 
             // Check for flags
             while (true) {
@@ -734,7 +854,8 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
                     else
                         charstr[0] = (CHAR16)va_arg(args, int); // Assuming 16 bit char16_t
 
-                    buf[buf_idx++] = charstr[0];
+                    // Only add non-null characters, to not end string early
+                    if (charstr[0]) buf[buf_idx++] = charstr[0];    
                 }
                 break;
 
@@ -819,10 +940,418 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
                 break;
 
                 default:
-                    stream->OutputString(stream, u"Invalid format specifier: %");
+                    strcpy_c16(buf, u"Invalid format specifier: %");
                     charstr[0] = fmt[i];
-                    stream->OutputString(stream, charstr);
-                    stream->OutputString(stream, u"\r\n");
+                    strcat_c16(buf, charstr);
+                    strcat_c16(buf, u"\r\n");
+                    result = false;
+                    goto end;
+                    break;
+            }
+
+            if (int_num) {
+                // Number conversion: Integer
+                UINT64 number = 0;
+                switch (length_bits) {
+                    case 0:
+                    case 32: 
+                    default:
+                        // l
+                        number = va_arg(args, UINT32);
+                        if (signed_num) number = (INT32)number;
+                        break;
+
+                    case 8:
+                        // hh
+                        number = (UINT8)va_arg(args, int);
+                        if (signed_num) number = (INT8)number;
+                        break;
+
+                    case 16:
+                        // h
+                        number = (UINT16)va_arg(args, int);
+                        if (signed_num) number = (INT16)number;
+                        break;
+
+                    case 64:
+                        // ll
+                        number = va_arg(args, UINT64);
+                        if (signed_num) number = (INT64)number;
+                        break;
+                }
+
+                // Add space before positive number for ' ' flag
+                if (space_flag && signed_num && number >= 0) buf[buf_idx++] = u' ';    
+
+                // Add sign +/- before signed number for '+' flag
+                if (plus_flag && signed_num) buf[buf_idx++] = number >= 0 ? u'+' : u'-';
+
+                add_int_to_buf_c16(number, base, signed_num, precision, buf, &buf_idx);
+            }
+
+            if (double_num) {
+                // Number conversion: Float/Double
+                double number = va_arg(args, double);
+                UINTN whole_num = 0;
+
+                // Get digits before decimal point
+                whole_num = (UINTN)number;
+                UINTN num_digits = 0;
+                do {
+                   num_digits++; 
+                   whole_num /= 10;
+                } while (whole_num > 0);
+
+                // Add digits to write buffer
+                add_int_to_buf_c16(number, base, signed_num, num_digits, buf, &buf_idx);
+
+                // Print decimal digits equal to precision value, 
+                //   if precision is explicitly 0 then do not print
+                if (!input_precision || precision != 0) {
+                    buf[buf_idx++] = u'.';      // Add decimal point
+
+                    whole_num = (UINTN)number;  // Get only digits before decimal
+                    if (number < 0.0) number = -number; // Ensure number is positive
+                    number -= whole_num;        // Get only decimal digits
+
+                    // Move precision # of decimal digits before decimal point 
+                    //   using base 10, number = number * 10^precision
+                    for (UINTN i = 0; i < precision; i++)
+                        number *= 10;
+
+                    whole_num = (UINTN)number;  // Get only digits before decimal
+
+                    // Add digits to write buffer
+                    add_int_to_buf_c16(number, base, signed_num, precision, buf, &buf_idx);
+                }
+            }
+
+            // Flags are defined such that 0 is overruled by left justify and precision
+            if (padding_char == u'0' && (left_justify || precision > 0))
+                padding_char = u' ';
+
+            // Add padding depending on flags (0 or space) and left/right justify
+            INTN diff = min_field_width - buf_idx;
+            if (diff > 0) {
+                if (left_justify) {
+                    // Append padding to minimum width, always spaces
+                    while (diff--) buf[buf_idx++] = u' ';   
+                } else {
+                    // Right justify
+                    // Copy buffer to end of buffer
+                    INTN dst = min_field_width-1, src = buf_idx-1;
+                    while (src >= 0)  buf[dst--] = buf[src--];  // e.g. "TEST\0\0" -> "TETEST"
+
+                    // Overwrite beginning of buffer with padding
+                    dst = (int_num && alternate_form) ? 2 : 0;  // Skip 0x/0b/0o/... prefix
+                    while (diff--) buf[dst++] = padding_char;   // e.g. "TETEST" -> "  TEST"
+                }
+            }
+
+        } else {
+            // Not formatted string, print next character
+            buf[buf_idx++] = fmt[i];
+        }
+    }
+
+    end:
+    buf[buf_idx] = u'\0'; 
+    va_end(args);
+    return result;
+}
+
+// ==================================================================================
+// (CHAR16) Print formatted strings to a file stream, using a va_list for arguments
+// ==================================================================================
+bool vfprintf_c16(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args) {
+    CHAR16 buf[1024];   // Format string buffer for % strings
+    if (!format_string_c16(buf, fmt, args)) 
+        return false;
+    
+    return !EFI_ERROR(stream->OutputString(stream, buf));
+}
+
+// ============================================
+// (CHAR16) Print formatted strings to stdout
+// ============================================
+bool printf_c16(CHAR16 *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    return vfprintf_c16(cout, fmt, args);
+}
+
+// =============================================
+// (CHAR16) Print formatted strings to a string
+// =============================================
+bool sprintf_c16(CHAR16 *s, CHAR16 *fmt, ...) {
+    CHAR16 buf[1024];   // Format string buffer 
+    va_list args;
+
+    va_start(args, fmt);
+    if (!format_string_c16(buf, fmt, args)) 
+        return false;
+
+    strcpy_c16(s, buf);
+    return true;
+}
+
+// ==========================================
+// (ASCII) Add integer as string to buffer
+// ==========================================
+BOOLEAN
+add_int_to_buf(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digits, char *buf, 
+               UINTN *buf_idx) {
+    const char *digits = "0123456789ABCDEF";
+    char buffer[24];  // Hopefully enough for UINTN_MAX (UINT64_MAX) + sign character
+    UINTN i = 0;
+    BOOLEAN negative = FALSE;
+
+    if (base > 16) {
+        cerr->OutputString(cerr, u"Invalid base specified!\r\n");
+        return FALSE;    // Invalid base
+    }
+
+    // Only use and print negative numbers if decimal and signed True
+    if (base == 10 && signed_num && (INTN)number < 0) {
+       number = -(INTN)number;  // Get absolute value of correct signed value to get digits to print
+       negative = TRUE;
+    }
+
+    do {
+       buffer[i++] = digits[number % base];
+       number /= base;
+    } while (number > 0);
+
+    while (i < min_digits) buffer[i++] = u'0'; // Pad with 0s
+
+    // Add negative sign for decimal numbers
+    if (base == 10 && negative) buffer[i++] = u'-';
+
+    // NULL terminate string
+    buffer[i--] = u'\0';
+
+    // Reverse buffer to read left to right
+    for (UINTN j = 0; j < i; j++, i--) {
+        // Swap digits
+        UINTN temp = buffer[i];
+        buffer[i] = buffer[j];
+        buffer[j] = temp;
+    }
+
+    // Add number string to input buffer for printing
+    for (char *p = buffer; *p; p++) {
+        buf[*buf_idx] = *p;
+        *buf_idx += 1;
+    }
+    return TRUE;
+}
+
+// ========================================================================
+// (ASCII) Fill formatted string buffer with printf() format conversions
+// ========================================================================
+bool format_string(char *buf, char *fmt, va_list args) {
+    bool result = true;
+    char charstr[2] = {0};    
+    UINTN buf_idx = 0;
+
+    for (UINTN i = 0; fmt[i] != u'\0'; i++) {
+        if (fmt[i] == u'%') {
+            bool alternate_form = false;
+            UINTN min_field_width = 0;
+            UINTN precision = 0;
+            UINTN length_bits = 0;  
+            UINTN num_printed = 0;      // # of digits/chars printed for numbers or strings
+            UINT8 base = 0;
+            bool input_precision = false;
+            bool signed_num   = false;
+            bool int_num      = false;
+            bool double_num   = false;
+            bool left_justify = false;  // Left justify text from '-' flag instead of default right justify
+            bool space_flag   = false;
+            bool plus_flag    = false;
+            char padding_char = ' ';  // '0' or ' ' depending on flags
+            i++;
+
+            // Check for flags
+            while (true) {
+                switch (fmt[i]) {
+                    case u'#':
+                        // Alternate form
+                        alternate_form = true;
+                        i++;
+                        continue;
+
+                    case u'0':
+                        // 0-pad numbers on the left, unless '-' or precision is also defined
+                        padding_char = '0'; 
+                        i++;
+                        continue;
+
+                    case u' ':
+                        // Print a space before positive signed number conversion or empty string
+                        //   number conversions
+                        space_flag = true;
+                        if (plus_flag) space_flag = false;  // Plus flag '+' overrides space flag
+                        i++;
+                        continue;
+
+                    case u'+':
+                        // Always print +/- before a signed number conversion
+                        plus_flag = true;
+                        if (space_flag) space_flag = false; // Plus flag '+' overrides space flag
+                        i++;
+                        continue;
+
+                    case u'-':
+                        left_justify = true;
+                        i++;
+                        continue;
+
+                    default:
+                        break;
+                }
+                break; // No more flags
+            }
+
+            // Check for minimum field width e.g. in "8.2" this would be 8
+            if (fmt[i] == u'*') {
+                // Get int argument for min field width
+                min_field_width = va_arg(args, int);
+                i++;
+            } else {
+                // Get number literal from format string
+                while (isdigit_c16(fmt[i])) 
+                    min_field_width = (min_field_width * 10) + (fmt[i++] - u'0');
+            }
+
+            // Check for precision/maximum field width e.g. in "8.2" this would be 2
+            if (fmt[i] == u'.') {
+                input_precision = true; 
+                i++;
+                if (fmt[i] == u'*') {
+                    // Get int argument for precision
+                    precision = va_arg(args, int);
+                    i++;
+                } else {
+                    // Get number literal from format string
+                    while (isdigit_c16(fmt[i])) 
+                        precision = (precision * 10) + (fmt[i++] - u'0');
+                }
+            }
+
+            // Check for Length modifiers e.g. h/hh/l/ll
+            if (fmt[i] == u'h') {
+                i++;
+                length_bits = 16;       // h
+                if (fmt[i] == u'h') {
+                    i++;
+                    length_bits = 8;    // hh
+                }
+            } else if (fmt[i] == u'l') {
+                i++;
+                length_bits = 32;       // l
+                if (fmt[i] == u'l') {
+                    i++;
+                    length_bits = 64;    // ll
+                }
+            }
+
+            // Check for conversion specifier
+            switch (fmt[i]) {
+                case u'c': {
+                    // Print char value; printf("%c", char)
+                    charstr[0] = (char)va_arg(args, int);   // %hhc "ascii" or other 8 bit char
+
+                    // Only add non-null characters, to not end string early
+                    if (charstr[0]) buf[buf_idx++] = charstr[0];    
+                }
+                break;
+
+                case u's': {
+                    // Print string; printf("%s", string)
+                    if (length_bits == 8) {
+                        char *string = va_arg(args, char*);         // %hhs; Assuming 8 bit ascii chars
+                        while (*string) {
+                            buf[buf_idx++] = *string++;
+                            if (++num_printed == precision) break;  // Stop printing at max characters
+                        }
+
+                    } else {
+                        char *string = va_arg(args, char*);     // Assuming 16 bit char16_t
+                        while (*string) {
+                            buf[buf_idx++] = *string++;
+                            if (++num_printed == precision) break;  // Stop printing at max characters
+                        }
+                    }
+                }
+                break;
+
+                case u'd': {
+                    // Print INT32; printf("%d", number_int32)
+                    int_num = true;
+                    base = 10;
+                    signed_num = true;
+                }
+                break;
+
+                case u'x': {
+                    // Print hex UINTN; printf("%x", number_uintn)
+                    int_num = true;
+                    base = 16;
+                    signed_num = false;
+                    if (alternate_form) {
+                        buf[buf_idx++] = u'0';
+                        buf[buf_idx++] = u'x';
+                    }
+                }
+                break;
+
+                case u'u': {
+                    // Print UINT32; printf("%u", number_uint32)
+                    int_num = true;
+                    base = 10;
+                    signed_num = false;
+                }
+                break;
+
+                case u'b': {
+                    // Print UINTN as binary; printf("%b", number_uintn)
+                    int_num = true;
+                    base = 2;
+                    signed_num = false;
+                    if (alternate_form) {
+                        buf[buf_idx++] = u'0';
+                        buf[buf_idx++] = u'b';
+                    }
+                }
+                break;
+
+                case u'o': {
+                    // Print UINTN as octal; printf("%o", number_uintn)
+                    int_num = true;
+                    base = 8;
+                    signed_num = false;
+                    if (alternate_form) {
+                        buf[buf_idx++] = u'0';
+                        buf[buf_idx++] = u'o';
+                    }
+                }
+                break;
+
+                case u'f': {
+                    // Print INTN rounded float value
+                    double_num = true;
+                    signed_num = true;
+                    base = 10;
+                    if (!input_precision) precision = 6;    // Default decimal places to print
+                }
+                break;
+
+                default:
+                    strcpy(buf, "Invalid format specifier: %");
+                    charstr[0] = fmt[i];
+                    strcat(buf, charstr);
+                    strcat(buf, "\r\n");
                     result = false;
                     goto end;
                     break;
@@ -927,33 +1456,31 @@ bool vfprintf(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, va_list args
                 }
             }
 
-            // Print buffer output for formatted string
-            stream->OutputString(stream, buf);
-
         } else {
             // Not formatted string, print next character
-            charstr[0] = fmt[i];
-            stream->OutputString(stream, charstr);
+            buf[buf_idx++] = fmt[i];
         }
     }
 
     end:
+    buf[buf_idx] = u'\0'; 
     va_end(args);
     return result;
 }
 
-// ===================================
-// Print formatted strings to stdout
-// ===================================
-bool printf(CHAR16 *fmt, ...) {
-    bool result = true;
-
+// =============================================
+// (ASCII) Print formatted strings to a string
+// =============================================
+bool sprintf(char *s, char *fmt, ...) {
+    char buf[1024];   // Format string buffer 
     va_list args;
-    va_start(args, fmt);
-    result = vfprintf(cout, fmt, args);
-    va_end(args);
 
-    return result;
+    va_start(args, fmt);
+    if (!format_string(buf, fmt, args)) 
+        return false;
+
+    strcpy(s, buf);
+    return true;
 }
 
 // =======================================================================
@@ -961,15 +1488,15 @@ bool printf(CHAR16 *fmt, ...) {
 //   so they can acknowledge the error and it doesn't go on immediately.
 // =======================================================================
 bool error(char *file, int line, const char *func, EFI_STATUS status, CHAR16 *fmt, ...) {
-    printf(u"\r\nERROR: FILE %hhs, LINE %d, FUNCTION %hhs\r\n", file, line, func);
+    printf_c16(u"\r\nERROR: FILE %hhs, LINE %d, FUNCTION %hhs\r\n", file, line, func);
 
     // Print error code & string if applicable
     if (status > 0 && status - TOP_BIT < MAX_EFI_ERROR)
-        printf(u"STATUS: %#llx (%s)\r\n", status, EFI_ERROR_STRINGS[status-TOP_BIT]);
+        printf_c16(u"STATUS: %#llx (%s)\r\n", status, EFI_ERROR_STRINGS[status-TOP_BIT]);
 
     va_list args;
     va_start(args, fmt);
-    bool result = vfprintf(cerr, fmt, args); // Printf the error message to stderr
+    bool result = vfprintf_c16(cerr, fmt, args); // Printf the error message to stderr
     va_end(args);
 
     get_key();  // User will respond with input before going on
@@ -985,23 +1512,34 @@ BOOLEAN get_num(UINTN *number, UINT8 base) {
 
     if (!number) return false;  // Passed in NULL pointer
 
+    UINT8 pos = 0;
     *number = 0;
     do {
         key = get_key();
         if (key.ScanCode == SCANCODE_ESC) return false; // User wants to leave
 
+        // Backspace
+        if (key.UnicodeChar == u'\b' && pos > 0) {
+            printf_c16(u"\b"); 
+            pos--;
+            *number /= base;    // Remove last digit
+        }
+
         if (isdigit_c16(key.UnicodeChar)) {
             *number = (*number * base) + (key.UnicodeChar - u'0');
-            printf(u"%c", key.UnicodeChar);
+            printf_c16(u"%c", key.UnicodeChar);
+            pos++;
 
         } else if (base == 16) {
             if (key.UnicodeChar >= u'a' && key.UnicodeChar <= u'f') {
                 *number = (*number * base) + (key.UnicodeChar - u'a' + 10);
-                printf(u"%c", key.UnicodeChar);
+                printf_c16(u"%c", key.UnicodeChar);
+                pos++;
 
             } else if (key.UnicodeChar >= u'A' && key.UnicodeChar <= u'F') {
                 *number = (*number * base) + (key.UnicodeChar - u'A' + 10);
-                printf(u"%c", key.UnicodeChar);
+                printf_c16(u"%c", key.UnicodeChar);
+                pos++;
             }
         }
     } while (key.UnicodeChar != u'\r');
@@ -1014,7 +1552,7 @@ BOOLEAN get_num(UINTN *number, UINT8 base) {
 // ====================
 void print_guid(EFI_GUID guid) { 
     UINT8 *p = (UINT8 *)&guid;
-    printf(u"{%x,%x,%x,%x,%x,{%x,%x,%x,%x,%x,%x}}\r\n",
+    printf_c16(u"{%x,%x,%x,%x,%x,{%x,%x,%x,%x,%x,%x}}\r\n",
             *(UINT32 *)&p[0], *(UINT16 *)&p[4], *(UINT16 *)&p[6], 
             (UINTN)p[8], (UINTN)p[9], (UINTN)p[10], (UINTN)p[11], (UINTN)p[12], (UINTN)p[13], 
             (UINTN)p[14], (UINTN)p[15]);
@@ -1024,7 +1562,7 @@ void print_guid(EFI_GUID guid) {
 // Print an ACPI table header
 // ============================
 void print_acpi_table_header(ACPI_TABLE_HEADER header) { 
-    printf(u"Signature: %.4hhs\r\n"
+    printf_c16(u"Signature: %.4hhs\r\n"
            u"Length: %u\r\n"
            u"Revision: %#x\r\n"
            u"Checksum: %u\r\n"
@@ -1052,7 +1590,7 @@ void print_elf_info(VOID *elf_buffer) {
     ELF_Header_64 *ehdr = elf_buffer;
 
     // ELF header info
-    printf(u"Type: %u, Machine: %x, Entry Point: %#llx\r\n"
+    printf_c16(u"Type: %u, Machine: %x, Entry Point: %#llx\r\n"
            u"Pgm headers offset: %u, Elf Header Size: %u\r\n"
            u"Pgm entry size: %u, # of Pgm headers: %u\r\n",
            ehdr->e_type, ehdr->e_machine, ehdr->e_entry,
@@ -1060,7 +1598,7 @@ void print_elf_info(VOID *elf_buffer) {
            ehdr->e_phentsize, ehdr->e_phnum);
     
     ELF_Program_Header_64 *phdr = (ELF_Program_Header_64 *)((UINT8 *)ehdr + ehdr->e_phoff);
-    printf(u"\r\nLoadable Program Headers:\r\n");
+    printf_c16(u"\r\nLoadable Program Headers:\r\n");
 
     UINTN max_alignment = PAGE_SIZE;    
     UINTN mem_min = UINT64_MAX, mem_max = 0;
@@ -1068,7 +1606,7 @@ void print_elf_info(VOID *elf_buffer) {
         // Only interested in loadable program headers
         if (phdr->p_type != PT_LOAD) continue;
 
-        printf(u"%u: Offset: %x, Vaddr: %x, Paddr: %x, FileSize: %x\r\n"
+        printf_c16(u"%u: Offset: %x, Vaddr: %x, Paddr: %x, FileSize: %x\r\n"
                u"    MemSize: %x, Alignment: %x\r\n",
                (UINTN)i, phdr->p_offset, phdr->p_vaddr, phdr->p_paddr,
                phdr->p_filesz, phdr->p_memsz, phdr->p_align);
@@ -1089,14 +1627,14 @@ void print_elf_info(VOID *elf_buffer) {
         if (hdr_end   > mem_max) mem_max = hdr_end;
 
         if (cout->Mode->CursorRow >= text_rows-2) {
-            printf(u"\r\nPress any key to continue...\r\n");
+            printf_c16(u"\r\nPress any key to continue...\r\n");
             get_key();
             cout->ClearScreen(cout);
         }
     }
 
     UINTN max_memory_needed = mem_max - mem_min;   
-    printf(u"\r\nMemory needed for file: %#llx bytes\r\n", max_memory_needed);
+    printf_c16(u"\r\nMemory needed for file: %#llx bytes\r\n", max_memory_needed);
 }
 
 // =============================================================
@@ -1108,12 +1646,12 @@ void print_pe_info(VOID *pe_buffer) {
     UINT32 pe_sig_pos = *(UINT32 *)((UINT8 *)pe_buffer + pe_sig_offset);
     UINT8 *pe_sig = (UINT8 *)pe_buffer + pe_sig_pos;
 
-    printf(u"Signature: [%hhx][%hhx][%hhx][%hhx] ",
+    printf_c16(u"Signature: [%hhx][%hhx][%hhx][%hhx] ",
            pe_sig[0], pe_sig[1], pe_sig[2], pe_sig[3]);
 
     // COFF header
     PE_Coff_File_Header_64 *coff_hdr = (PE_Coff_File_Header_64 *)(pe_sig + 4);
-    printf(u"Coff Header:\r\n"
+    printf_c16(u"Coff Header:\r\n"
            u"Machine: %x, # of sections: %u, Size of Opt Hdr: %x\r\n"
            u"Characteristics: %x\r\n",
            coff_hdr->Machine, coff_hdr->NumberOfSections, coff_hdr->SizeOfOptionalHeader,
@@ -1122,7 +1660,7 @@ void print_pe_info(VOID *pe_buffer) {
     // Optional header - right after COFF header
     PE_Optional_Header_64 *opt_hdr = (PE_Optional_Header_64 *)(coff_hdr + 1);
 
-    printf(u"\r\nOptional Header:\r\n"
+    printf_c16(u"\r\nOptional Header:\r\n"
            u"Magic: %x, Entry Point: %#llx\r\n" 
            u"Sect Align: %x, File Align: %x, Size of Image: %x\r\n"
            u"Subsystem: %x, DLL Characteristics: %x\r\n",
@@ -1134,25 +1672,25 @@ void print_pe_info(VOID *pe_buffer) {
     PE_Section_Header_64 *shdr = 
         (PE_Section_Header_64 *)((UINT8 *)opt_hdr + coff_hdr->SizeOfOptionalHeader);
 
-    printf(u"\r\nSection Headers:\r\n");
+    printf_c16(u"\r\nSection Headers:\r\n");
     for (UINT16 i = 0; i < coff_hdr->NumberOfSections; i++, shdr++) {
-        printf(u"Name: ");
+        printf_c16(u"Name: ");
         char *pos = (char *)&shdr->Name;
         for (UINT8 j = 0; j < 8; j++) {
             CHAR16 str[2];
             str[0] = *pos;
             str[1] = u'\0';
             if (*pos == '\0') break;
-            printf(u"%s", str);
+            printf_c16(u"%s", str);
             pos++;
         }
 
-        printf(u" VSize: %x, Vaddr: %x, DataSize: %x, DataPtr: %x\r\n",
+        printf_c16(u" VSize: %x, Vaddr: %x, DataSize: %x, DataPtr: %x\r\n",
                shdr->VirtualSize, shdr->VirtualAddress, 
                shdr->SizeOfRawData, shdr->PointerToRawData);
 
         if (cout->Mode->CursorRow >= text_rows-2) {
-            printf(u"\r\nPress any key to continue...\r\n");
+            printf_c16(u"\r\nPress any key to continue...\r\n");
             get_key();
             cout->ClearScreen(cout);
         }
@@ -1435,6 +1973,177 @@ EFI_FILE_PROTOCOL *esp_root_dir(VOID) {
     if (sfsp) bs->CloseProtocol(image, &lip_guid, image, NULL);
 
     return root;
+}
+
+// =======================================================================
+// Get and set the largest HorizontalxVertical resolution GOP mode found
+// =======================================================================
+EFI_STATUS set_largest_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL **ret_gop) {
+    EFI_STATUS status = EFI_SUCCESS;
+
+    // Get GOP protocol via LocateProtocol()
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode_info = NULL;
+    UINTN mode_info_size = sizeof *mode_info;
+
+    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate GOP.\r\n");
+        return status;
+    }
+
+    // Get current GOP mode information
+    status = gop->QueryMode(gop, gop->Mode->Mode, &mode_info_size, &mode_info);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not Query GOP Mode %u.\r\n", gop->Mode->Mode);
+        return status;
+    }
+
+    UINT32 max_mode = gop->Mode->MaxMode;
+    UINT32 largest_res_mode = 0;
+    UINTN largest_res = 0;
+    for (UINT32 i = 0; i < max_mode; i++) {
+        status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
+        if (EFI_ERROR(status)) continue;
+
+        if (mode_info->PixelFormat == PixelBltOnly || 
+            mode_info->PixelFormat == PixelBitMask) 
+            continue;   // No linear framebuffer
+
+        UINTN temp_res = mode_info->HorizontalResolution * mode_info->VerticalResolution;
+        if (temp_res > largest_res) {
+            largest_res = temp_res;
+            largest_res_mode = i;
+        }
+    }
+
+    if (largest_res_mode > 0) {
+        status = gop->SetMode(gop, largest_res_mode);
+        if (EFI_ERROR(status)) {
+            error(status, u"Could not set GOP mode %u.\r\n", largest_res_mode);
+            return status;
+        }
+        status = gop->QueryMode(gop, largest_res_mode, &mode_info_size, &mode_info);
+    }
+
+    *ret_gop = gop;
+    return status;
+}
+
+// ================================================================
+// Set the GOP mode with a given Horizontal & Vertical resolution 
+// ================================================================
+EFI_STATUS set_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL **ret_gop, UINT32 xres, UINT32 yres) {
+    EFI_STATUS status = EFI_SUCCESS;
+
+    // Get GOP protocol via LocateProtocol()
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode_info = NULL;
+    UINTN mode_info_size = sizeof *mode_info;
+
+    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate GOP.\r\n");
+        return status;
+    }
+
+    // Get current GOP mode information
+    status = gop->QueryMode(gop, gop->Mode->Mode, &mode_info_size, &mode_info);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not Query GOP Mode %u.\r\n", gop->Mode->Mode);
+        return status;
+    }
+
+    // Get first GOP mode with xres/yres values
+    UINT32 max_mode = gop->Mode->MaxMode;
+    UINT32 save_mode = 0;
+    for (UINT32 i = 0; i < max_mode; i++) {
+        status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
+        if (EFI_ERROR(status)) continue;
+
+        if (mode_info->PixelFormat == PixelBltOnly || 
+            mode_info->PixelFormat == PixelBitMask) 
+            continue;   // No linear framebuffer
+
+        if (mode_info->HorizontalResolution == xres && 
+            mode_info->VerticalResolution   == yres) {
+            save_mode = i;
+            break;
+        }
+    }
+
+    if (save_mode == 0) 
+        status = EFI_UNSUPPORTED;
+    else {
+        status = gop->SetMode(gop, save_mode);
+        if (EFI_ERROR(status)) {
+            error(status, u"Could not set GOP mode %u.\r\n", save_mode);
+            return status;
+        }
+        status = gop->QueryMode(gop, save_mode, &mode_info_size, &mode_info);
+    }
+
+    *ret_gop = gop;
+    return status;
+}
+
+// =========================================================================
+// Check if a GOP mode exists for a given Horizontal & Vertical resolution 
+// =========================================================================
+EFI_STATUS check_gop_mode(UINT32 *ret_mode, UINT32 xres, UINT32 yres) {
+    EFI_STATUS status = EFI_SUCCESS;
+
+    // Get GOP protocol via LocateProtocol()
+    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID; 
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode_info = NULL;
+    UINTN mode_info_size = sizeof *mode_info;
+
+    status = bs->LocateProtocol(&gop_guid, NULL, (VOID **)&gop);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate GOP.\r\n");
+        return status;
+    }
+
+    // Get current GOP mode information
+    status = gop->QueryMode(gop, gop->Mode->Mode, &mode_info_size, &mode_info);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not Query GOP Mode %u.\r\n", gop->Mode->Mode);
+        return status;
+    }
+
+    // Get first GOP mode with xres/yres values
+    UINT32 max_mode = gop->Mode->MaxMode;
+    UINT32 save_mode = 0;
+    for (UINT32 i = 0; i < max_mode; i++) {
+        status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
+        if (EFI_ERROR(status)) continue;
+
+        if (mode_info->PixelFormat == PixelBltOnly || 
+            mode_info->PixelFormat == PixelBitMask) 
+            continue;   // No linear framebuffer
+
+        if (mode_info->HorizontalResolution == xres && 
+            mode_info->VerticalResolution   == yres) {
+            save_mode = i;
+            break;
+        }
+    }
+
+    if (save_mode == 0) 
+        status = EFI_UNSUPPORTED;
+    else {
+        status = gop->QueryMode(gop, save_mode, &mode_info_size, &mode_info);
+        if (EFI_ERROR(status)) {
+            error(status, u"Could not get GOP mode %u info.\r\n", save_mode);
+            return status;
+        }
+    }
+
+    *ret_mode = save_mode;
+    return status;
 }
 
 // TODO: Make helper function to read disk partition file to buffer,
