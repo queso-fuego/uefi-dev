@@ -1,36 +1,41 @@
-# Aiming for POSIX.1-2024 compliance
+# Aiming for (mostly) POSIX.1-2024 compliance
 .POSIX:
 
-# Uncomment disk image program & shell script for Windows
-#DISK_IMG_PGM    ::= write_gpt.exe
-#QEMU_SCRIPT     ::= qemu.bat
+# Set architecture and machine type if wanted
+# Can override on command line with 'ARCH=<arch> MACHINE=<machine> make'
+ARCH 	?= x86_64
+MACHINE ?= unknown
 
-# Uncomment disk image program & shell script for Linux
-DISK_IMG_PGM    ::= write_gpt
-QEMU_SCRIPT     ::= qemu.sh
+# Uncomment disk image program & shell script 
+#DISK_IMG_PGM ::= write_gpt.exe		# Windows
+#QEMU_SCRIPT  ::= qemu.bat			# Windows
+DISK_IMG_PGM ::= write_gpt			# Linux
+QEMU_SCRIPT	 ::= qemu_$(ARCH).sh	# Linux
 
 DISK_IMG_FOLDER ::= ../UEFI-GPT-image-creator/
 
 # Uncomment CC/LDFLAGS for EFI object - gcc
-#EFICC       ::= x86_64-w64-mingw32-gcc
+#EFICC       ::= $(ARCH)-w64-mingw32-gcc
 #EFI_LDFLAGS ::= \
 	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
 # Uncomment CC/LDFLAGS for EFI object - clang
-EFICC       ::= clang -target x86_64-unknown-windows 
+EFICC       ::= clang -target $(ARCH)-$(MACHINE)-windows 
 EFI_LDFLAGS ::= \
 	-nostdlib \
 	-fuse-ld=lld-link \
 	-Wl,-subsystem:efi_application \
 	-Wl,-entry:efi_main
 
-ELFCC ::= clang 
-ELFLD ::= ld
+# ELF files
+ELFCC ::= clang -target $(ARCH)-$(MACHINE)-elf 
+ELFLD ::= ld.lld
 
-PECC  ::= x86_64-w64-mingw32-gcc
-PELD  ::= x86_64-w64-mingw32-ld
+# PE32+ files
+PECC  ::= $(ARCH)-w64-mingw32-gcc
+PELD  ::= $(ARCH)-w64-mingw32-ld
 
 # Common CFLAGS
 CFLAGS ::= \
@@ -43,14 +48,25 @@ CFLAGS ::= \
 	-ffreestanding \
 	-fno-stack-protector	# Freestanding programs do not have libc stack protector functions
 
+# Define arch/machine types for #ifdef, etc. use in source files
+# -I include for "#include <arch/ARCH/ARCH.h>" or other files under top level "include" directory
+CFLAGS += -D ARCH=$(ARCH) -D MACHINE=$(MACHINE) -I include
+
 KERNEL_SRC     ::= kernel.c
 KERNEL_CFLAGS  ::= $(CFLAGS) -fPIE
 KERNEL_LDFLAGS ::= -e kmain -nostdlib -pie
 
 EFISRC  ::= efi.c
-EFIOBJ  ::= $(EFISRC:.c=.o)
+EFIOBJ  ::= $(EFISRC:%.c=%_$(ARCH).o)
 DEPENDS ::= $(EFIOBJ:.o=.d) $(KERNEL_SRC:.c=.d)
+
+# EFI application to use, should automatically boot from UEFI/OVMF if in /EFI/BOOT/ folder in 
+#  the EFI System Partition (ESP)
+ifeq ($(ARCH), x86_64) 
 EFI_APP ::= BOOTX64.EFI
+else ifeq ($(ARCH), aarch64) 
+EFI_APP ::= BOOTAA64.EFI
+endif
 
 # Uncomment kernel binary format to build
 KERNEL ::= kernel.elf    # ELF64 PIE kernel binary
@@ -62,21 +78,18 @@ FONT ::= ter-132n.psf	# PSF2 Bitmapped Font: Terminus 16x32 ISO8859-1
 
 # Add kernel binary to new disk image
 ADD_KERNEL = \
-	cp $(KERNEL) $(DISK_IMG_FOLDER); \
-	cp $(FONT) $(DISK_IMG_FOLDER); \
 	cd $(DISK_IMG_FOLDER); \
-	./$(DISK_IMG_PGM) -ad $(KERNEL) $(FONT);
+	./$(DISK_IMG_PGM) -ae /EFI/BOOT/ ../efi_c/$(EFI_APP) \
+					  -ad ../efi_c/$(KERNEL) ../efi_c/$(FONT);
 
-all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(KERNEL) $(EFI_APP)
-	cd $(DISK_IMG_FOLDER); \
+all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(EFI_APP) $(KERNEL) 
 	./$(QEMU_SCRIPT)
 
 $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM):
 	cd $(DISK_IMG_FOLDER) && $(MAKE) 
 
-$(EFI_APP): $(EFIOBJ)
+$(EFI_APP): $(EFIOBJ) 
 	$(EFICC) $(EFI_LDFLAGS) -o $@ $<
-	cp $@ $(DISK_IMG_FOLDER)
 	$(ADD_KERNEL)
 
 $(EFIOBJ): $(EFISRC)
@@ -104,5 +117,5 @@ kernel.binpe: $(KERNEL_SRC)
 -include $(DEPENDS)
 
 clean:
-	rm -rf $(EFI_APP) $(KERNEL) *.bin* *.d *.efi *.elf *.o *.obj *.pe
+	rm -rf $(EFI_APP) $(KERNEL) [!bios]*.bin* *.d *.efi *.EFI *.elf *.o *.obj *.pe
 

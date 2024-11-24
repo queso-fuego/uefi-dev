@@ -213,91 +213,6 @@ typedef struct {
     UINT32 creator_revision;
 } ACPI_TABLE_HEADER;
 
-// KEY:
-// GDT = Global Descriptor Table
-// LDT = Local Descriptor Table
-// TSS = Task State Segment
-
-// Use this for GDTR with assembly "LGDT" instruction
-typedef struct {
-    UINT16 limit;
-    UINT64 base; 
-} __attribute__((packed)) Descriptor_Register;
-
-// Descriptor e.g. an array of these is used for the GDT/LDT
-typedef struct {
-    union {
-        UINT64 value;
-        struct {
-            UINT64 limit_15_0:  16;
-            UINT64 base_15_0:   16;
-            UINT64 base_23_16:  8;
-            UINT64 type:        4;
-            UINT64 s:           1;  // System descriptor (0), Code/Data segment (1)
-            UINT64 dpl:         2;  // Descriptor Privelege Level
-            UINT64 p:           1;  // Present flag
-            UINT64 limit_19_16: 4;
-            UINT64 avl:         1;  // Available for use
-            UINT64 l:           1;  // 64 bit (Long mode) code segment
-            UINT64 d_b:         1;  // Default op size/stack pointer size/upper bound flag
-            UINT64 g:           1;  // Granularity; 1 byte (0), 4KiB (1)
-            UINT64 base_31_24:  8;
-        };
-    };
-} X86_64_Descriptor;
-
-// TSS/LDT descriptor - 64 bit
-typedef struct {
-    X86_64_Descriptor descriptor;
-    UINT32 base_63_32;
-    UINT32 zero;
-} TSS_LDT_Descriptor;
-
-// TSS structure - TSS descriptor points to this structure in the GDT
-typedef struct {
-    UINT32 reserved_1;
-    UINT32 RSP0_lower;
-    UINT32 RSP0_upper;
-    UINT32 RSP1_lower;
-    UINT32 RSP1_upper;
-    UINT32 RSP2_lower;
-    UINT32 RSP2_upper;
-    UINT32 reserved_2;
-    UINT32 reserved_3;
-    UINT32 IST1_lower;
-    UINT32 IST1_upper;
-    UINT32 IST2_lower;
-    UINT32 IST2_upper;
-    UINT32 IST3_lower;
-    UINT32 IST3_upper;
-    UINT32 IST4_lower;
-    UINT32 IST4_upper;
-    UINT32 IST5_lower;
-    UINT32 IST5_upper;
-    UINT32 IST6_lower;
-    UINT32 IST6_upper;
-    UINT32 IST7_lower;
-    UINT32 IST7_upper;
-    UINT32 reserved_4;
-    UINT32 reserved_5;
-    UINT16 reserved_6;
-    UINT16 io_map_base;
-} TSS;
-
-// Example GDT
-typedef struct {
-    X86_64_Descriptor  null;                // Offset 0x00
-    X86_64_Descriptor  kernel_code_64;      // Offset 0x08
-    X86_64_Descriptor  kernel_data_64;      // Offset 0x10
-    X86_64_Descriptor  user_code_64;        // Offset 0x18
-    X86_64_Descriptor  user_data_64;        // Offset 0x20
-    X86_64_Descriptor  kernel_code_32;      // Offset 0x28
-    X86_64_Descriptor  kernel_data_32;      // Offset 0x30
-    X86_64_Descriptor  user_code_32;        // Offset 0x38
-    X86_64_Descriptor  user_data_32;        // Offset 0x40
-    TSS_LDT_Descriptor tss;                 // Offset 0x48
-} GDT;
-
 // PSF Font types
 // Adapted from https://wiki.osdev.org/PC_Screen_Font
 #define PSF2_FONT_MAGIC 0x864ab572
@@ -981,10 +896,10 @@ bool format_string_c16(CHAR16 *buf, CHAR16 *fmt, va_list args) {
                 }
 
                 // Add space before positive number for ' ' flag
-                if (space_flag && signed_num && number >= 0) buf[buf_idx++] = u' ';    
+                if (space_flag && signed_num && (INTN)number >= 0) buf[buf_idx++] = u' ';    
 
                 // Add sign +/- before signed number for '+' flag
-                if (plus_flag && signed_num) buf[buf_idx++] = number >= 0 ? u'+' : u'-';
+                if (plus_flag && signed_num) buf[buf_idx++] = (INTN)number >= 0 ? u'+' : u'-';
 
                 add_int_to_buf_c16(number, base, signed_num, precision, buf, &buf_idx);
             }
@@ -1080,19 +995,13 @@ bool printf_c16(CHAR16 *fmt, ...) {
     return vfprintf_c16(cout, fmt, args);
 }
 
-// =============================================
+// ==============================================
 // (CHAR16) Print formatted strings to a string
-// =============================================
+// ==============================================
 bool sprintf_c16(CHAR16 *s, CHAR16 *fmt, ...) {
-    CHAR16 buf[1024];   // Format string buffer 
     va_list args;
-
     va_start(args, fmt);
-    if (!format_string_c16(buf, fmt, args)) 
-        return false;
-
-    strcpy_c16(s, buf);
-    return true;
+    return format_string_c16(s, fmt, args);
 }
 
 // ==========================================
@@ -1389,10 +1298,10 @@ bool format_string(char *buf, char *fmt, va_list args) {
                 }
 
                 // Add space before positive number for ' ' flag
-                if (space_flag && signed_num && number >= 0) buf[buf_idx++] = u' ';    
+                if (space_flag && signed_num && (INTN)number >= 0) buf[buf_idx++] = u' ';    
 
                 // Add sign +/- before signed number for '+' flag
-                if (plus_flag && signed_num) buf[buf_idx++] = number >= 0 ? u'+' : u'-';
+                if (plus_flag && signed_num) buf[buf_idx++] = (INTN)number >= 0 ? u'+' : u'-';
 
                 add_int_to_buf(number, base, signed_num, precision, buf, &buf_idx);
             }
@@ -1472,15 +1381,9 @@ bool format_string(char *buf, char *fmt, va_list args) {
 // (ASCII) Print formatted strings to a string
 // =============================================
 bool sprintf(char *s, char *fmt, ...) {
-    char buf[1024];   // Format string buffer 
     va_list args;
-
     va_start(args, fmt);
-    if (!format_string(buf, fmt, args)) 
-        return false;
-
-    strcpy(s, buf);
-    return true;
+    return format_string(s, fmt, args);
 }
 
 // =======================================================================
@@ -2003,6 +1906,7 @@ EFI_STATUS set_largest_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL **ret_gop) {
     UINT32 max_mode = gop->Mode->MaxMode;
     UINT32 largest_res_mode = 0;
     UINTN largest_res = 0;
+    bool found_mode = false;
     for (UINT32 i = 0; i < max_mode; i++) {
         status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
         if (EFI_ERROR(status)) continue;
@@ -2015,10 +1919,13 @@ EFI_STATUS set_largest_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL **ret_gop) {
         if (temp_res > largest_res) {
             largest_res = temp_res;
             largest_res_mode = i;
+            found_mode = true;
         }
     }
 
-    if (largest_res_mode > 0) {
+    if (!found_mode) 
+        status = EFI_UNSUPPORTED;
+    else if (largest_res_mode > 0) {
         status = gop->SetMode(gop, largest_res_mode);
         if (EFI_ERROR(status)) {
             error(status, u"Could not set GOP mode %u.\r\n", largest_res_mode);
@@ -2059,6 +1966,7 @@ EFI_STATUS set_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL **ret_gop, UINT32 xres, UIN
     // Get first GOP mode with xres/yres values
     UINT32 max_mode = gop->Mode->MaxMode;
     UINT32 save_mode = 0;
+    bool found_mode = false;
     for (UINT32 i = 0; i < max_mode; i++) {
         status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
         if (EFI_ERROR(status)) continue;
@@ -2070,11 +1978,12 @@ EFI_STATUS set_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL **ret_gop, UINT32 xres, UIN
         if (mode_info->HorizontalResolution == xres && 
             mode_info->VerticalResolution   == yres) {
             save_mode = i;
+            found_mode = true;
             break;
         }
     }
 
-    if (save_mode == 0) 
+    if (!found_mode) 
         status = EFI_UNSUPPORTED;
     else {
         status = gop->SetMode(gop, save_mode);
@@ -2117,6 +2026,7 @@ EFI_STATUS check_gop_mode(UINT32 *ret_mode, UINT32 xres, UINT32 yres) {
     // Get first GOP mode with xres/yres values
     UINT32 max_mode = gop->Mode->MaxMode;
     UINT32 save_mode = 0;
+    bool found_mode = false;
     for (UINT32 i = 0; i < max_mode; i++) {
         status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
         if (EFI_ERROR(status)) continue;
@@ -2128,11 +2038,12 @@ EFI_STATUS check_gop_mode(UINT32 *ret_mode, UINT32 xres, UINT32 yres) {
         if (mode_info->HorizontalResolution == xres && 
             mode_info->VerticalResolution   == yres) {
             save_mode = i;
+            found_mode = true;
             break;
         }
     }
 
-    if (save_mode == 0) 
+    if (!found_mode)
         status = EFI_UNSUPPORTED;
     else {
         status = gop->QueryMode(gop, save_mode, &mode_info_size, &mode_info);
@@ -2441,4 +2352,119 @@ EFI_HII_PACKAGE_LIST_HEADER *hii_database_package_list(UINT8 package_type) {
 // if (simple_fonts) bs->FreePool(simple_fonts);
 // ---------------------------------------------------------------------
 
+// ==================================================
+// Allocate pages from available UEFI Memory Map;
+//   technically not allocating more, but returning
+//   available pre-existing page addresses.
+//   Using this as a sort of bump allocator.
+// ==================================================
+void *mmap_allocate_pages(Memory_Map_Info *mmap, UINTN pages) {
+    static void *next_page_address = NULL;  // Next page/page range address to return to caller
+    static UINTN current_descriptor = 0;    // Current descriptor number
+    static UINTN remaining_pages = 0;       // Remaining pages in current descriptor
+
+    if (remaining_pages < pages) {
+        // Not enough remaining pages in current descriptor, find the next available one
+        UINTN i = current_descriptor+1;
+        for (; i < mmap->size / mmap->desc_size; i++) {
+            EFI_MEMORY_DESCRIPTOR *desc = 
+                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+            if (desc->Type == EfiConventionalMemory && desc->NumberOfPages >= pages) {
+                // Found enough memory to use at this descriptor, use it
+                current_descriptor = i;
+                remaining_pages = desc->NumberOfPages - pages;
+                next_page_address = (void *)(desc->PhysicalStart + (pages * PAGE_SIZE));
+                return (void *)desc->PhysicalStart;
+            }
+        }
+
+        if (i >= mmap->size / mmap->desc_size) {
+            // Ran out of descriptors to check in memory map
+            error(0, u"\r\nCould not find any memory to allocate pages for.\r\n");
+            return NULL;
+        }
+    }
+
+    // Else we have at least enough pages for this allocation, return the current spot in 
+    //   the memory map
+    remaining_pages -= pages;
+    void *page = next_page_address;
+    next_page_address = (void *)((UINT8 *)page + (pages * PAGE_SIZE));
+    return page;
+}
+
+// ===========================================================
+// Identity map a page of memory, virtual = physical address
+// ===========================================================
+extern void arch_map_page(uint64_t physical_address, uint64_t virtual_address, Memory_Map_Info *mmap);
+
+void identity_map_page(UINTN address, Memory_Map_Info *mmap) {
+    arch_map_page(address, address, mmap);
+}
+
+// ======================================================================
+// Initialize new paging setup by identity mapping all available memory 
+//   from EFI memory map
+// ======================================================================
+void identity_map_efi_mmap(Memory_Map_Info *mmap) {
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        for (UINTN j = 0; j < desc->NumberOfPages; j++)
+            identity_map_page(desc->PhysicalStart + (j * PAGE_SIZE), mmap);
+    }
+}
+
+// ======================================================================
+// Identity map runtime memory descriptors only, to use with
+//   RuntimeServices->SetVirtualAddressMap()
+// ======================================================================
+void set_runtime_address_map(Memory_Map_Info *mmap) {
+    // First get amount of memory to allocate for runtime memory map
+    UINTN runtime_descriptors = 0;
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        if (desc->Attribute & EFI_MEMORY_RUNTIME)
+            runtime_descriptors++;
+    }
+
+    // Allocate memory for runtime memory map
+    UINTN runtime_mmap_pages = (runtime_descriptors * mmap->desc_size) + ((PAGE_SIZE-1) / PAGE_SIZE);
+    EFI_MEMORY_DESCRIPTOR *runtime_mmap = mmap_allocate_pages(mmap, runtime_mmap_pages);
+    if (!runtime_mmap) {
+        error(0, u"Could not allocate runtime descriptors memory map\r\n");
+        return;
+    }
+
+    // Identity map all runtime descriptors in each descriptor
+    UINTN runtime_mmap_size = runtime_mmap_pages * PAGE_SIZE; 
+    memset(runtime_mmap, 0, runtime_mmap_size);
+
+    // Set all runtime descriptors in new runtime memory map, and identity map them
+    UINTN curr_runtime_desc = 0;
+    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
+        EFI_MEMORY_DESCRIPTOR *desc = 
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
+
+        if (desc->Attribute & EFI_MEMORY_RUNTIME) {
+            EFI_MEMORY_DESCRIPTOR *runtime_desc = 
+                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)runtime_mmap + (curr_runtime_desc * mmap->desc_size));
+
+            memcpy(runtime_desc, desc, mmap->desc_size);    
+            runtime_desc->VirtualStart = runtime_desc->PhysicalStart;
+            curr_runtime_desc++;
+        }
+    }
+
+    // Set new virtual addresses for runtime memory via SetVirtualAddressMap()
+    EFI_STATUS status = rs->SetVirtualAddressMap(runtime_mmap_size, 
+                                                 mmap->desc_size, 
+                                                 mmap->desc_version,
+                                                 runtime_mmap);
+    if (EFI_ERROR(status)) error(0, u"SetVirtualAddressMap()\r\n");
+}
 

@@ -5,6 +5,9 @@
 #include "efi.h"
 #include "efi_lib.h"
 
+#define arch_header <arch/ARCH/ARCH.h>
+#include arch_header
+
 // ------------------------------
 // Global variables / Constants
 // ------------------------------
@@ -79,7 +82,7 @@ noreturn void EFIAPI kmain(Kernel_Parms *kargs) {
     // Infinite loop, do not return back to UEFI,
     //   this is in case my hardware (laptop) doesn't shut off from ResetSystem
     //   Can still use power button manually to shut down fine
-    while (true) __asm__ __volatile__ ("cli; hlt");
+    while (true) arch_cpu_halt();
 
     // Should not return after shutting down
     //__builtin_unreachable();

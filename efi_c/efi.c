@@ -3,6 +3,9 @@
 #include "efi.h"
 #include "efi_lib.h"
 
+#define arch_header <arch/ARCH/ARCH.h>
+#include arch_header
+
 // -----------------
 // Global constants
 // -----------------
@@ -17,7 +20,6 @@
 #define px_BLACK {0x00,0x00,0x00,0x00}
 #define px_BLUE  {0x98,0x00,0x00,0x00}  // EFI_BLUE
 
-#define PHYS_PAGE_ADDR_MASK 0x000FFFFFFFFFF000  // 52 bit physical address limit, lowest 12 bits are for flags only
 #define PAGE_SIZE 4096  // 4KiB
 
 // Kernel start address in higher memory (64-bit) - last 2 GiBs of virtual memory
@@ -26,18 +28,6 @@
 #ifdef __clang__
 int _fltused = 0;   // If using floating point code & lld-link, need to define this
 #endif
-
-// Page flags: bits 11-0
-enum {
-    PRESENT    = (1 << 0),
-    READWRITE  = (1 << 1),
-    USER       = (1 << 2),
-};
-
-// Page table structure: 512 64bit entries per table/level
-typedef struct {
-    UINT64 entries[512];
-} Page_Table;
 
 // -----------------
 // Global variables
@@ -69,8 +59,6 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL cursor_buffer[] = {
 
 // Buffer to save Framebuffer data at cursor position
 EFI_GRAPHICS_OUTPUT_BLT_PIXEL save_buffer[8*8] = {0};
-
-Page_Table *pml4 = NULL;        // Top level 4 page table for x86_64 long mode paging
 
 bool autoload_kernel = false;   // Autoload kernel instead of main menu?
 
@@ -1313,8 +1301,8 @@ VOID *load_pe(VOID *pe_buffer, EFI_PHYSICAL_ADDRESS *file_buffer, UINTN *file_si
     PE_Coff_File_Header_64 *coff_hdr = (PE_Coff_File_Header_64 *)(pe_sig + 4);
 
     // Validate header values
-    if (coff_hdr->Machine != 0x8664) {
-        error(0, u"Machine type not AMD64.\r\n");
+    if (coff_hdr->Machine != ARCH_COFF_MACHINE) {
+        error(0, u"Machine type not ARCH.\r\n");    // Uses ARCH from makefile
         return NULL;
     }
 
@@ -1415,182 +1403,6 @@ EFI_STATUS get_memory_map(Memory_Map_Info *mmap) {
     }
 
     return EFI_SUCCESS;
-}
-
-// ==================================================
-// Allocate pages from available UEFI Memory Map;
-//   technically not allocating more, but returning
-//   available pre-existing page addresses.
-//   Using this as a sort of bump allocator.
-// ==================================================
-void *mmap_allocate_pages(Memory_Map_Info *mmap, UINTN pages) {
-    static void *next_page_address = NULL;  // Next page/page range address to return to caller
-    static UINTN current_descriptor = 0;    // Current descriptor number
-    static UINTN remaining_pages = 0;       // Remaining pages in current descriptor
-
-    if (remaining_pages < pages) {
-        // Not enough remaining pages in current descriptor, find the next available one
-        UINTN i = current_descriptor+1;
-        for (; i < mmap->size / mmap->desc_size; i++) {
-            EFI_MEMORY_DESCRIPTOR *desc = 
-                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
-
-            if (desc->Type == EfiConventionalMemory && desc->NumberOfPages >= pages) {
-                // Found enough memory to use at this descriptor, use it
-                current_descriptor = i;
-                remaining_pages = desc->NumberOfPages - pages;
-                next_page_address = (void *)(desc->PhysicalStart + (pages * PAGE_SIZE));
-                return (void *)desc->PhysicalStart;
-            }
-        }
-
-        if (i >= mmap->size / mmap->desc_size) {
-            // Ran out of descriptors to check in memory map
-            error(0, u"\r\nCould not find any memory to allocate pages for.\r\n");
-            return NULL;
-        }
-    }
-
-    // Else we have at least enough pages for this allocation, return the current spot in 
-    //   the memory map
-    remaining_pages -= pages;
-    void *page = next_page_address;
-    next_page_address = (void *)((UINT8 *)page + (pages * PAGE_SIZE));
-    return page;
-}
-
-// ==================================================================
-// Map a virtual address to a physical address for a page of memory
-// ==================================================================
-void map_page(UINTN physical_address, UINTN virtual_address, Memory_Map_Info *mmap) {
-    int flags = PRESENT | READWRITE | USER;   // 0b111
-
-    UINTN pml4_index = ((virtual_address) >> 39) & 0x1FF;   // 0-511
-    UINTN pdpt_index = ((virtual_address) >> 30) & 0x1FF;   // 0-511
-    UINTN pdt_index  = ((virtual_address) >> 21) & 0x1FF;   // 0-511
-    UINTN pt_index   = ((virtual_address) >> 12) & 0x1FF;   // 0-511
-
-    // Make sure pdpt exists, if not then allocate it
-    if (!(pml4->entries[pml4_index] & PRESENT)) {
-        void *pdpt_address = mmap_allocate_pages(mmap, 1);
-
-        memset(pdpt_address, 0, sizeof(Page_Table));
-        pml4->entries[pml4_index] = (UINTN)pdpt_address | flags;  
-    }
-
-    // Make sure pdt exists, if not then allocate it
-    Page_Table *pdpt = (Page_Table *)(pml4->entries[pml4_index] & PHYS_PAGE_ADDR_MASK);
-    if (!(pdpt->entries[pdpt_index] & PRESENT)) {
-        void *pdt_address = mmap_allocate_pages(mmap, 1);
-
-        memset(pdt_address, 0, sizeof(Page_Table));
-        pdpt->entries[pdpt_index] = (UINTN)pdt_address | flags;  
-    }
-
-    // Make sure pt exists, if not then allocate it
-    Page_Table *pdt = (Page_Table *)(pdpt->entries[pdpt_index] & PHYS_PAGE_ADDR_MASK);
-    if (!(pdt->entries[pdt_index] & PRESENT)) {
-        void *pt_address = mmap_allocate_pages(mmap, 1);
-
-        memset(pt_address, 0, sizeof(Page_Table));
-        pdt->entries[pdt_index] = (UINTN)pt_address | flags;  
-    }
-
-    // Map new page physical address if not present
-    Page_Table *pt = (Page_Table *)(pdt->entries[pdt_index] & PHYS_PAGE_ADDR_MASK);
-    if (!(pt->entries[pt_index] & PRESENT)) 
-        pt->entries[pt_index] = (physical_address & PHYS_PAGE_ADDR_MASK) | flags;
-}
-
-// ==============================
-// Unmap a page/virtual address 
-// ==============================
-void unmap_page(UINTN virtual_address) {
-    UINTN pml4_index = ((virtual_address) >> 39) & 0x1FF;   // 0-511
-    UINTN pdpt_index = ((virtual_address) >> 30) & 0x1FF;   // 0-511
-    UINTN pdt_index  = ((virtual_address) >> 21) & 0x1FF;   // 0-511
-    UINTN pt_index   = ((virtual_address) >> 12) & 0x1FF;   // 0-511
-
-    Page_Table *pdpt = (Page_Table *)(pml4->entries[pml4_index] & PHYS_PAGE_ADDR_MASK);
-    Page_Table *pdt = (Page_Table *)(pdpt->entries[pdpt_index] & PHYS_PAGE_ADDR_MASK);
-    Page_Table *pt = (Page_Table *)(pdt->entries[pdt_index] & PHYS_PAGE_ADDR_MASK);
-
-    pt->entries[pt_index] = 0;  // Clear page in page table to unmap the physical address there
-
-    // Flush the TLB cache for this page
-    __asm__ __volatile__("invlpg (%0)\n" : : "r"(virtual_address));
-}
-
-// ===========================================================
-// Identity map a page of memory, virtual = physical address
-// ===========================================================
-void identity_map_page(UINTN address, Memory_Map_Info *mmap) {
-    map_page(address, address, mmap);
-}
-
-// ======================================================================
-// Initialize new paging setup by identity mapping all available memory 
-//   from EFI memory map
-// ======================================================================
-void identity_map_efi_mmap(Memory_Map_Info *mmap) {
-    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
-        EFI_MEMORY_DESCRIPTOR *desc = 
-            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
-
-        for (UINTN j = 0; j < desc->NumberOfPages; j++)
-            identity_map_page(desc->PhysicalStart + (j * PAGE_SIZE), mmap);
-    }
-}
-
-// ======================================================================
-// Identity map runtime memory descriptors only, to use with
-//   RuntimeServices->SetVirtualAddressMap()
-// ======================================================================
-void set_runtime_address_map(Memory_Map_Info *mmap) {
-    // First get amount of memory to allocate for runtime memory map
-    UINTN runtime_descriptors = 0;
-    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
-        EFI_MEMORY_DESCRIPTOR *desc = 
-            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
-
-        if (desc->Attribute & EFI_MEMORY_RUNTIME)
-            runtime_descriptors++;
-    }
-
-    // Allocate memory for runtime memory map
-    UINTN runtime_mmap_pages = (runtime_descriptors * mmap->desc_size) + ((PAGE_SIZE-1) / PAGE_SIZE);
-    EFI_MEMORY_DESCRIPTOR *runtime_mmap = mmap_allocate_pages(mmap, runtime_mmap_pages);
-    if (!runtime_mmap) {
-        error(0, u"Could not allocate runtime descriptors memory map\r\n");
-        return;
-    }
-
-    // Identity map all runtime descriptors in each descriptor
-    UINTN runtime_mmap_size = runtime_mmap_pages * PAGE_SIZE; 
-    memset(runtime_mmap, 0, runtime_mmap_size);
-
-    // Set all runtime descriptors in new runtime memory map, and identity map them
-    UINTN curr_runtime_desc = 0;
-    for (UINTN i = 0; i < mmap->size / mmap->desc_size; i++) {
-        EFI_MEMORY_DESCRIPTOR *desc = 
-            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap->map + (i * mmap->desc_size));
-
-        if (desc->Attribute & EFI_MEMORY_RUNTIME) {
-            EFI_MEMORY_DESCRIPTOR *runtime_desc = 
-                (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)runtime_mmap + (curr_runtime_desc * mmap->desc_size));
-
-            memcpy(runtime_desc, desc, mmap->desc_size);    
-            runtime_desc->VirtualStart = runtime_desc->PhysicalStart;
-            curr_runtime_desc++;
-        }
-    }
-
-    // Set new virtual addresses for runtime memory via SetVirtualAddressMap()
-    EFI_STATUS status = rs->SetVirtualAddressMap(runtime_mmap_size, 
-                                                 mmap->desc_size, 
-                                                 mmap->desc_version,
-                                                 runtime_mmap);
-    if (EFI_ERROR(status)) error(0, u"SetVirtualAddressMap()\r\n");
 }
 
 // ==========================================
@@ -1804,11 +1616,10 @@ EFI_STATUS load_kernel(void) {
         goto cleanup;
     }
 
-    // Set up new level 4 page table
-    pml4 = mmap_allocate_pages(&kparms.mmap, 1);
-    memset(pml4, 0, sizeof *pml4);  
+    // Initialize page tables
+    arch_init_page_tables(&kparms.mmap);
 
-    // Initialize new paging setup by identity mapping all available memory 
+    // Identity mapping all available memory 
     identity_map_efi_mmap(&kparms.mmap);
 
     // Identity map runtime services memory & set new runtime address map
@@ -1816,7 +1627,9 @@ EFI_STATUS load_kernel(void) {
 
     // Remap kernel to higher addresses
     for (UINTN i = 0; i < (kernel_size + (PAGE_SIZE-1)) / PAGE_SIZE; i++) 
-        map_page(kernel_buffer + (i*PAGE_SIZE), KERNEL_START_ADDRESS + (i*PAGE_SIZE), &kparms.mmap); 
+        arch_map_page(kernel_buffer + (i*PAGE_SIZE), 
+                      KERNEL_START_ADDRESS + (i*PAGE_SIZE), 
+                      &kparms.mmap); 
 
     // NOTE: TODO: Remap kparms to higher address?
 
@@ -1827,80 +1640,14 @@ EFI_STATUS load_kernel(void) {
     // Identity map new stack for kernel
     const UINTN STACK_PAGES = 16;   
     void *kernel_stack = mmap_allocate_pages(&kparms.mmap, STACK_PAGES);   // 64KiB stack
-    memset(kernel_stack, 0, STACK_PAGES*PAGE_SIZE); // Initialize stack memory
+    uint32_t stack_size = STACK_PAGES * PAGE_SIZE;
+    memset(kernel_stack, 0, stack_size); // Initialize stack memory
 
     for (UINTN i = 0; i < STACK_PAGES; i++) 
         identity_map_page((UINTN)kernel_stack + (i*PAGE_SIZE), &kparms.mmap); 
 
-    // Set up new GDT & TSS
-    TSS tss = {.io_map_base = sizeof(TSS)}; // All bits after limit (in TSS descriptor) assumed to be '1'
-    UINTN tss_address = (UINTN)&tss;
-
-    GDT gdt = {
-        .null.value           = 0x0000000000000000, // Null descriptor
-
-        .kernel_code_64.value = 0x00AF9A000000FFFF,
-        .kernel_data_64.value = 0x00CF92000000FFFF,
-
-        .user_code_64.value   = 0x00AFFA000000FFFF,
-        .user_data_64.value   = 0x00CFF2000000FFFF,
-
-        .kernel_code_32.value = 0x00CF9A000000FFFF,
-        .kernel_data_32.value = 0x00CF92000000FFFF,
-
-        .user_code_32.value   = 0x00CFFA000000FFFF,
-        .user_data_32.value   = 0x00CFF2000000FFFF,
-
-        .tss = {
-            .descriptor = {
-                .limit_15_0 = sizeof tss - 1,
-                .base_15_0  = tss_address & 0xFFFF, 
-                .base_23_16 = (tss_address >> 16) & 0xFF, 
-                .type       = 9,    // 0b1001 64 bit TSS (available)
-                .p          = 1,    // Present
-                .base_31_24 = (tss_address >> 24) & 0xFF,
-            },
-            .base_63_32 = (tss_address >> 32) & 0xFFFFFFFF,
-        }
-    };
-
-    Descriptor_Register gdtr = {.limit = sizeof gdt - 1, .base = (UINT64)&gdt}; 
-
-    // Get pointer to kernel for RCX as first parameter for x86_64 MS ABI
-    Kernel_Parms *kparms_ptr = &kparms; 
-
-    // Set new page tables (CR3 = PML4) and GDT (lgdt && ltr), and call entry point with parms
-    __asm__ __volatile__(
-        "cli\n"                     // Clear interrupts before setting new GDT/TSS, etc.
-        "movq %[pml4], %%CR3\n"     // Load new page tables
-        "lgdt %[gdt]\n"             // Load new GDT from gdtr register
-        "ltr %[tss]\n"              // Load new task register with new TSS value (byte offset into GDT)
-
-        // Jump to new code segment in GDT (offset in GDT of 64 bit kernel/system code segment)
-        "pushq $0x8\n"
-        "leaq 1f(%%RIP), %%RAX\n"
-        "pushq %%RAX\n"
-        "lretq\n"
-
-        // Executing code with new Code segment now, set up remaining segment registers
-        "1:\n"
-        "movq $0x10, %%RAX\n"   // Data segment to use (64 bit kernel data segment, offset in GDT)
-        "movq %%RAX, %%DS\n"    // Data segment
-        "movq %%RAX, %%ES\n"    // Extra segment
-        "movq %%RAX, %%FS\n"    // Extra segment (2), these also have different uses in Long Mode
-        "movq %%RAX, %%GS\n"    // Extra segment (3), these also have different uses in Long Mode
-        "movq %%RAX, %%SS\n"    // Stack segment
-
-        // Set new stack value to use (for SP/stack pointer, etc.)
-        "movq %[stack], %%RSP\n"
-
-        // Call new entry point in higher memory
-        "callq *%[entry]\n" // First parameter is kparms_ptr in RCX in input constraints below, for MS ABI
-      :
-      : [pml4]"r"(pml4), [gdt]"m"(gdtr), [tss]"r"((UINT16)0x48),
-        [stack]"gm"((UINTN)kernel_stack + (STACK_PAGES * PAGE_SIZE)),    // Top of newly allocated stack
-        [entry]"r"(higher_entry_point), "c"(kparms_ptr)
-      : "rax", "memory");
+    // Set page tables & paging, do other arch specific settings, and call kernel
+    arch_setup_and_call_kernel(higher_entry_point, kernel_stack, stack_size, &kparms);
 
     // Final cleanup
     cleanup:
