@@ -1481,8 +1481,10 @@ EFI_STATUS load_kernel(void) {
     }
 
     if (!autoload_kernel) {
-        printf_c16(u"\r\nPress any key to load kernel...\r\n");
-        get_key();
+        printf_c16(u"\r\nPress ESC to abort, or another key to load kernel...\r\n");
+        EFI_INPUT_KEY key = get_key();
+        if (key.ScanCode == SCANCODE_ESC)
+            goto cleanup;
     }
 
     // Close Timer Event so that it does not continue to fire off
@@ -1662,8 +1664,6 @@ EFI_STATUS load_kernel(void) {
         bs->FreePool(kparms.fonts);   // Free memory for kparms fonts array
     }
 
-    printf_c16(u"\r\nPress any key to go back...\r\n");
-    get_key();
     return EFI_SUCCESS;
 }
 
