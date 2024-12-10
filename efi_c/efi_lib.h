@@ -995,6 +995,15 @@ bool printf_c16(CHAR16 *fmt, ...) {
     return vfprintf_c16(cout, fmt, args);
 }
 
+// ===================================================
+// (CHAR16) Print formatted strings to a file stream
+// ===================================================
+bool fprintf_c16(EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *stream, CHAR16 *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    return vfprintf_c16(stream, fmt, args);
+}
+
 // ==============================================
 // (CHAR16) Print formatted strings to a string
 // ==============================================
@@ -1600,6 +1609,52 @@ void print_pe_info(VOID *pe_buffer) {
     }
 }
 
+// ============================================================================
+// Get EFI_FILE_PROTOCOL* to root directory '/' of EFI System Partition (ESP)
+// NOTE: Caller must close open root directory pointer with 
+//   e.g. "root->Close(root);"
+// ============================================================================
+EFI_FILE_PROTOCOL *esp_root_dir(VOID) {
+    EFI_FILE_PROTOCOL *root = NULL;
+    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
+    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
+    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+
+    EFI_STATUS status = EFI_SUCCESS;
+    status = bs->OpenProtocol(image,
+                              &lip_guid,
+                              (VOID **)&lip,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not open Loaded Image Protocol\r\n");
+        goto done;
+    }
+
+    // Get Simple File System Protocol for the device handle for this loaded
+    //   image, to open the root directory for the ESP
+    status = bs->OpenProtocol(lip->DeviceHandle,
+                              &sfsp_guid,
+                              (VOID **)&sfsp,
+                              image,
+                              NULL,
+                              EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not open Simple File System Protocol\r\n");
+        goto done;
+    }
+
+    // Open root directory via OpenVolume()
+    status = sfsp->OpenVolume(sfsp, &root);
+    if (EFI_ERROR(status)) 
+        error(status, u"Could not Open Volume for root directory\r\n");
+
+    done:
+    return root;
+}
+
 // ===================================================================
 // Read a fully qualified file path in the EFI System Partition into 
 //   an output buffer. File path must start with root '\',
@@ -1621,40 +1676,9 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
 
     *file_size = 0;
 
-    // Get loaded image protocol first to grab device handle to use 
-    //   simple file system protocol on
-    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
-    status = bs->OpenProtocol(image,
-                              &lip_guid,
-                              (VOID **)&lip,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Loaded Image Protocol\r\n");
-        goto cleanup;
-    }
-
-    // Get Simple File System Protocol for device handle for this loaded
-    //   image, to open the root directory for the ESP
-    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
-    status = bs->OpenProtocol(lip->DeviceHandle,
-                              &sfsp_guid,
-                              (VOID **)&sfsp,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Simple File System Protocol\r\n");
-        goto cleanup;
-    }
-
-    // Open root directory via OpenVolume()
-    status = sfsp->OpenVolume(sfsp, &root);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not Open Volume for root directory in ESP\r\n");
+    root = esp_root_dir();
+    if (!root) {
+        error(0, u"Could not get root directory of ESP.\r\n");
         goto cleanup;
     }
 
@@ -1698,17 +1722,6 @@ VOID *read_esp_file_to_buffer(CHAR16 *path, UINTN *file_size) {
     if (file) file->Close(file);
     if (root) root->Close(root);
 
-    // Close open protocols
-    bs->CloseProtocol(lip->DeviceHandle,
-                      &sfsp_guid,
-                      image,
-                      NULL);
-
-    bs->CloseProtocol(image,
-                      &lip_guid,
-                      image,
-                      NULL);
-
     // Will return buffer with file data or NULL on errors
     return file_buffer; 
 }
@@ -1740,7 +1753,7 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
     status = bs->LocateHandleBuffer(ByProtocol, &bio_guid, NULL, &num_handles, &handle_buffer);
     if (EFI_ERROR(status)) {
         error(status, u"Could not locate any Block IO Protocols.\r\n");
-        return buffer;
+        goto done;
     }
 
     BOOLEAN found = false;
@@ -1751,15 +1764,10 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
                                   (VOID **)&biop,
                                   image,
                                   NULL,
-                                  EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                                  EFI_OPEN_PROTOCOL_GET_PROTOCOL);
 
         if (EFI_ERROR(status)) {
-            error(status, u"Could not Open Block IO protocol on handle %u.\r\n", i);
-            // Close open protocol 
-            bs->CloseProtocol(handle_buffer[i],
-                              &bio_guid,
-                              image,
-                              NULL);
+            fprintf_c16(cerr, u"Could not Open Block IO protocol on handle %u.\r\n", i);
             continue;
         }
 
@@ -1767,17 +1775,11 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
             found = true;
             break;
         }
-
-        // Close open protocol when done
-        bs->CloseProtocol(handle_buffer[i],
-                          &bio_guid,
-                          image,
-                          NULL);
     }
 
     if (!found) {
         error(0, u"Could not find Block IO protocol for disk with ID %u.\r\n", disk_mediaID);
-        return buffer;
+        goto done;
     }
 
     // Get Disk IO Protocol on same handle as Block IO protocol
@@ -1788,10 +1790,10 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
                               (VOID **)&diop,
                               image,
                               NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                              EFI_OPEN_PROTOCOL_GET_PROTOCOL);
     if (EFI_ERROR(status)) {
         error(status, u"Could not Open Disk IO protocol on handle %u.\r\n", i);
-        goto cleanup;
+        goto done;
     }
 
     // Allocate buffer for data
@@ -1802,11 +1804,7 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
                                &buffer);
     if (EFI_ERROR(status)) {
         error(status, u"Could not Allocate buffer for disk data.\r\n");
-        bs->CloseProtocol(handle_buffer[i],
-                          &dio_guid,
-                          image,
-                          NULL);
-        goto cleanup;
+        goto done;
     }
 
     // Use Disk IO Read to read into allocated buffer
@@ -1814,68 +1812,8 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
     if (EFI_ERROR(status)) 
         error(status, u"Could not read Disk LBAs into buffer.\r\n");
 
-    // Close disk IO protocol when done
-    bs->CloseProtocol(handle_buffer[i],
-                      &dio_guid,
-                      image,
-                      NULL);
-
-    cleanup:
-    // Close open block io protocol when done
-    bs->CloseProtocol(handle_buffer[i],
-                      &bio_guid,
-                      image,
-                      NULL);
+    done:
     return buffer;
-}
-
-// ============================================================================
-// Get EFI_FILE_PROTOCOL* to root directory '/' of EFI System Partition (ESP)
-// NOTE: Caller must close open root directory pointer with 
-//   e.g. "root->Close(root);"
-// ============================================================================
-EFI_FILE_PROTOCOL *esp_root_dir(VOID) {
-    EFI_FILE_PROTOCOL *root = NULL;
-    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
-    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
-    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-
-    EFI_STATUS status = EFI_SUCCESS;
-    status = bs->OpenProtocol(image,
-                              &lip_guid,
-                              (VOID **)&lip,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Loaded Image Protocol\r\n");
-        goto cleanup;
-    }
-
-    // Get Simple File System Protocol for the device handle for this loaded
-    //   image, to open the root directory for the ESP
-    status = bs->OpenProtocol(lip->DeviceHandle,
-                              &sfsp_guid,
-                              (VOID **)&sfsp,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Simple File System Protocol\r\n");
-        goto cleanup;
-    }
-
-    // Open root directory via OpenVolume()
-    status = sfsp->OpenVolume(sfsp, &root);
-    if (EFI_ERROR(status)) 
-        error(status, u"Could not Open Volume for root directory\r\n");
-
-    cleanup:
-    if (lip)  bs->CloseProtocol(lip->DeviceHandle, &sfsp_guid, image, NULL);
-    if (sfsp) bs->CloseProtocol(image, &lip_guid, image, NULL);
-
-    return root;
 }
 
 // =======================================================================

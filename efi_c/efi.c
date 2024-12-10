@@ -1470,8 +1470,8 @@ EFI_STATUS load_kernel(void) {
     Entry_Point higher_entry_point = (Entry_Point)(KERNEL_START_ADDRESS + entry_offset);
 
     // Print info for loaded kernel 
-    printf_c16(u"\r\nOriginal Kernel address: %x, size: %u, entry point: %x\r\n"
-           u"Higher address entry point: %x\r\n",
+    printf_c16(u"\r\nOriginal Kernel address: %llx, size: %u, entry point: %llx\r\n"
+           u"Higher address entry point: %llx\r\n",
             kernel_buffer, kernel_size, (UINTN)entry_point, higher_entry_point);
 
     if (!entry_point) {   
