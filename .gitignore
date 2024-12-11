@@ -9,3 +9,4 @@
 *.pe
 *.binelf
 *.binpe
+*.raw

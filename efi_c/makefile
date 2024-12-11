@@ -6,6 +6,12 @@
 ARCH 	?= x86_64
 MACHINE ?= unknown
 
+ifeq ($(OS), Windows_NT)
+HOST_OS ::= Windows
+else
+HOST_OS ::= Linux
+endif
+
 # Uncomment disk image program & shell script 
 #DISK_IMG_PGM ::= write_gpt.exe		# Windows
 #QEMU_SCRIPT  ::= qemu.bat			# Windows
@@ -13,6 +19,13 @@ DISK_IMG_PGM ::= write_gpt			# Linux
 QEMU_SCRIPT	 ::= qemu_$(ARCH).sh	# Linux
 
 DISK_IMG_FOLDER ::= ../UEFI-GPT-image-creator/
+
+ifeq ($(ARCH), x86_64)
+OVMF ::= $(DISK_IMG_FOLDER)bios64.bin
+endif
+ifeq ($(ARCH), aarch64)
+OVMF ::= QEMU_EFI_AARCH64.raw
+endif
 
 # Uncomment CC/LDFLAGS for EFI object - gcc
 #EFICC       ::= $(ARCH)-w64-mingw32-gcc
@@ -82,11 +95,25 @@ ADD_KERNEL = \
 	./$(DISK_IMG_PGM) -ae /EFI/BOOT/ ../efi_c/$(EFI_APP) \
 					  -ad ../efi_c/$(KERNEL) ../efi_c/$(FONT);
 
-all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(EFI_APP) $(KERNEL) 
+all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(OVMF) $(EFI_APP) $(KERNEL) 
 	./$(QEMU_SCRIPT)
 
 $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM):
 	cd $(DISK_IMG_FOLDER) && $(MAKE) 
+
+# Pad out AARCH64 ovmf file to 64MiB for QEMU to work correctly if wanting to use pflash,
+#   the -bios option otherwise seems fine with the default size.
+# Not sure what all windows has, if not dd. Maybe fsutil works?
+$(OVMF): 
+ifeq ($(ARCH), aarch64)
+ifeq ($(HOST_OS), Linux)
+	dd if=/dev/zero of=$@ bs=1M count=64 
+	dd if=QEMU_EFI_AARCH64.fd of=$@ bs=1M conv=notrunc
+else
+	cp QEMU_EFI_AARCH64.fd $@
+	fsutil file seteof $@ 67108864
+endif
+endif
 
 $(EFI_APP): $(EFIOBJ) 
 	$(EFICC) $(EFI_LDFLAGS) -o $@ $<
