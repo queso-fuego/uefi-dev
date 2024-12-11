@@ -443,8 +443,8 @@ EFI_STATUS set_graphics_mode(void) {
                         gop->SetMode(gop, mode_index);
                         gop->QueryMode(gop, mode_index, &mode_info_size, &mode_info);
 
-                        // Clear GOP screen - EFI_BLUE seems to have a hex value of 0x98
-                        EFI_GRAPHICS_OUTPUT_BLT_PIXEL px = { 0x98, 0x00, 0x00, 0x00 };  // BGR_8888
+                        // Clear GOP screen 
+                        EFI_GRAPHICS_OUTPUT_BLT_PIXEL px = px_BLUE;
                         gop->Blt(gop, &px, EfiBltVideoFill, 
                                  0, 0,  // Origin BLT BUFFER X,Y
                                  0, 0,  // Destination screen X,Y
@@ -470,8 +470,8 @@ EFI_STATUS test_mouse(void) {
     // Get SPP protocol via LocateHandleBuffer()
     EFI_GUID spp_guid = EFI_SIMPLE_POINTER_PROTOCOL_GUID;
     EFI_SIMPLE_POINTER_PROTOCOL *spp[5];
-    UINTN num_handles = 0;
-    EFI_HANDLE *handle_buffer = NULL;
+    UINTN spp_handles = 0, app_handles = 0;
+    EFI_HANDLE *spp_handle_buf = NULL, *app_handle_buf = NULL;
     EFI_STATUS status = 0;
     INTN cursor_size = 8;               // Size in pixels    
     INTN cursor_x = 0, cursor_y = 0;    // Mouse cursor position
@@ -523,18 +523,19 @@ EFI_STATUS test_mouse(void) {
 
     gop->QueryMode(gop, mode_index, &mode_info_size, &mode_info);
 
-    // Use LocateHandleBuffer() to find all SPPs 
-    status = bs->LocateHandleBuffer(ByProtocol, &spp_guid, NULL, &num_handles, &handle_buffer);
-    if (EFI_ERROR(status)) 
-        error(status, u"Could not locate Simple Pointer Protocol handle buffer.\r\n");
-
     cout->ClearScreen(cout);
-
     BOOLEAN found_mode = FALSE;
 
+    // Use LocateHandleBuffer() to find all SPPs 
+    status = bs->LocateHandleBuffer(ByProtocol, &spp_guid, NULL, &spp_handles, &spp_handle_buf);
+    if (EFI_ERROR(status)) {
+        error(status, u"Could not locate Simple Pointer Protocol handle buffer.\r\n");
+        goto get_app;
+    }
+
     // Open all SPP protocols for each handle
-    for (UINTN i = 0; i < num_handles; i++) {
-        status = bs->OpenProtocol(handle_buffer[i], 
+    for (UINTN i = 0; i < spp_handles; i++) {
+        status = bs->OpenProtocol(spp_handle_buf[i], 
                                   &spp_guid,
                                   (VOID **)&spp[i],
                                   image,
@@ -571,23 +572,21 @@ EFI_STATUS test_mouse(void) {
     
     if (!found_mode) error(0, u"\r\nCould not find any valid SPP Mode.\r\n");
 
-    // Free memory pool allocated by LocateHandleBuffer()
-    bs->FreePool(handle_buffer);
-
     // Use LocateHandleBuffer() to find all APPs 
-    num_handles = 0;
-    handle_buffer = NULL;
+    get_app:
     found_mode = FALSE;
 
-    status = bs->LocateHandleBuffer(ByProtocol, &app_guid, NULL, &num_handles, &handle_buffer);
-    if (EFI_ERROR(status)) 
+    status = bs->LocateHandleBuffer(ByProtocol, &app_guid, NULL, &app_handles, &app_handle_buf);
+    if (EFI_ERROR(status)) {
         error(status, u"Could not locate Absolute Pointer Protocol handle buffer.\r\n");
+        goto after_app;
+    }
 
     printf_c16(u"\r\n");    // Separate SPP and APP info visually
 
     // Open all APP protocols for each handle
-    for (UINTN i = 0; i < num_handles; i++) {
-        status = bs->OpenProtocol(handle_buffer[i], 
+    for (UINTN i = 0; i < app_handles; i++) {
+        status = bs->OpenProtocol(app_handle_buf[i], 
                                   &app_guid,
                                   (VOID **)&app[i],
                                   image,
@@ -626,9 +625,10 @@ EFI_STATUS test_mouse(void) {
     
     if (!found_mode) error(0, u"Could not find any valid APP Mode.\r\n");
 
+    after_app:
     if (num_protocols == 0) {
         error(0, u"Could not find any Simple or Absolute Pointer Protocols.\r\n");
-        return 1;
+        goto done;
     }
 
     // Found valid SPP mode, get mouse input
@@ -684,22 +684,17 @@ EFI_STATUS test_mouse(void) {
             // Print current info
             // Movement is spp state's RelativeMovement / spp mode's Resolution
             //   movement amount is in mm; 1mm = 2% of horizontal or vertical resolution
-            float xmm_float = (float)state.RelativeMovementX / (float)active_spp->Mode->ResolutionX;
-            float ymm_float = (float)state.RelativeMovementY / (float)active_spp->Mode->ResolutionY;
-
-            // If moved a tiny bit, show that on screen for a small minimum amount
-            if (state.RelativeMovementX > 0 && xmm_float == 0.0) xmm_float = 1.0;
-            if (state.RelativeMovementY > 0 && ymm_float == 0.0) ymm_float = 1.0;
+            double xmm_float = (double)state.RelativeMovementX / (double)active_spp->Mode->ResolutionX;
+            double ymm_float = (double)state.RelativeMovementY / (double)active_spp->Mode->ResolutionY;
 
             // Erase text first before reprinting
             printf_c16(u"                                                                      \r");
-            printf_c16(u"Mouse Xpos: %d, Ypos: %d, Xmm: %d, Ymm: %d, LB: %u, RB: %u\r",
-                  cursor_x, cursor_y, (INTN)xmm_float, (INTN)ymm_float, 
-                  state.LeftButton, state.RightButton);
+            printf_c16(u"Mouse Xpos: %d, Ypos: %d, Xmm: %.4f, Ymm: %.4f, LB: %b, RB: %b\r",
+                  cursor_x, cursor_y, xmm_float, ymm_float, state.LeftButton, state.RightButton);
 
             // Draw cursor: Get pixel amount to move per mm
-            float xres_mm_px = mode_info->HorizontalResolution * 0.02;
-            float yres_mm_px = mode_info->VerticalResolution   * 0.02;
+            const double xres_mm_px = mode_info->HorizontalResolution * 0.02;
+            const double yres_mm_px = mode_info->VerticalResolution   * 0.02;
 
             // Save framebuffer data at mouse position first, then redraw that data
             //   instead of just overwriting with background color e.g. with a blt buffer and
@@ -785,15 +780,29 @@ EFI_STATUS test_mouse(void) {
         }
     }
 
+    done:
+    // Free mouse spp/app handle buffers memory & close open protocols
+    if (spp_handle_buf) {
+        for (UINTN i = 0; i < spp_handles; i++)
+            bs->CloseProtocol(spp_handle_buf[i], &spp_guid, image, NULL);
+
+        bs->FreePool(spp_handle_buf);
+    }
+
+    if (app_handle_buf) {
+        for (UINTN i = 0; i < spp_handles; i++)
+            bs->CloseProtocol(app_handle_buf[i], &app_guid, image, NULL);
+
+        bs->FreePool(app_handle_buf);
+    }
+
     return EFI_SUCCESS;
 }
 
 // ===========================================================
 // Timer function to print current date/time every 1 second
 // ===========================================================
-VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
-    (VOID)event; // Suppress compiler warning
-
+VOID EFIAPI print_datetime(__attribute__((unused)) IN EFI_EVENT event, IN VOID *Context) {
     Timer_Context context = *(Timer_Context *)Context;
 
     // Save current cursor position before printing date/time
@@ -824,43 +833,13 @@ VOID EFIAPI print_datetime(IN EFI_EVENT event, IN VOID *Context) {
 // Read & print files in the EFI System Partition
 // ================================================
 EFI_STATUS read_esp_files(void) {
-    // Get the Loaded Image protocol for this EFI image/application itself,
-    //   in order to get the device handle to use for the Simple File System Protocol
     EFI_STATUS status = EFI_SUCCESS;
-    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
-    status = bs->OpenProtocol(image,
-                              &lip_guid,
-                              (VOID **)&lip,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Loaded Image Protocol\r\n");
-        return status;
-    }
 
-    // Get Simple File System Protocol for device handle for this loaded
-    //   image, to open the root directory for the ESP
-    EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsp = NULL;
-    status = bs->OpenProtocol(lip->DeviceHandle,
-                              &sfsp_guid,
-                              (VOID **)&sfsp,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Simple File System Protocol\r\n");
-        return status;
-    }
-
-    // Open root directory via OpenVolume()
-    EFI_FILE_PROTOCOL *dirp = NULL;
-    status = sfsp->OpenVolume(sfsp, &dirp);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not Open Volume for root directory\r\n");
-        goto cleanup;
+    // Get ESP root directory
+    EFI_FILE_PROTOCOL *dirp = esp_root_dir();
+    if (!dirp) {
+        error(0, u"Could not get ESP root directory.\r\n");
+        goto done;
     }
 
     // Start at root directory
@@ -906,21 +885,20 @@ EFI_STATUS read_esp_files(void) {
         switch (key.ScanCode) {
             case SCANCODE_ESC:
                 // ESC Key, exit and go back to main menu
-                dirp->Close(dirp);  // Close last open directory 
-                goto cleanup;
+                goto done;
                 break;
 
             case SCANCODE_UP_ARROW:
-                if (csr_row > 1) csr_row--;
-                break;
-
             case SCANCODE_DOWN_ARROW:
-                if (csr_row < num_entries) csr_row++;
+                // Go up or down 1 row in range [1:num_entries] (circular buffer)
+                csr_row = (key.ScanCode == SCANCODE_UP_ARROW) 
+                          ? ((csr_row-1 + num_entries-1) % num_entries) + 1
+                          : (csr_row % num_entries) + 1;
                 break;
 
             default:
                 if (key.UnicodeChar == u'\r') {
-                    // Enter key; 
+                    // Enter key: 
                     //   for a directory, enter that directory and iterate the loop
                     //   for a file, print the file contents to screen
 
@@ -944,7 +922,7 @@ EFI_STATUS read_esp_files(void) {
 
                         if (EFI_ERROR(status)) {
                             error(status, u"Could not open new directory %s\r\n", file_info.FileName);
-                            goto cleanup;
+                            goto done;
                         }
 
                         dirp->Close(dirp);  // Close last opened dir
@@ -979,7 +957,7 @@ EFI_STATUS read_esp_files(void) {
                     status = bs->AllocatePool(EfiLoaderData, buf_size, &buffer);
                     if (EFI_ERROR(status)) {
                         error(status, u"Could not allocate memory for file %s\r\n", file_info.FileName);
-                        goto cleanup;
+                        goto done;
                     }
 
                     // Open file
@@ -992,21 +970,21 @@ EFI_STATUS read_esp_files(void) {
 
                     if (EFI_ERROR(status)) {
                         error(status, u"Could not open file %s\r\n", file_info.FileName);
-                        goto cleanup;
+                        goto done;
                     }
 
                     // Read file into buffer
                     status = dirp->Read(file, &buf_size, buffer);
                     if (EFI_ERROR(status)) {
                         error(status, u"Could not read file %s into buffer.\r\n", file_info.FileName);
-                        goto cleanup;
+                        goto done;
                     } 
 
                     if (buf_size != file_info.FileSize) {
                         error(0, u"Could not read all of file %s into buffer.\r\n" 
                               u"Bytes read: %u, Expected: %u\r\n",
                               file_info.FileName, buf_size, file_info.FileSize);
-                        goto cleanup;
+                        goto done;
                     }
 
                     // Print buffer contents
@@ -1040,18 +1018,8 @@ EFI_STATUS read_esp_files(void) {
         }
     }
 
-    cleanup:
-    // Close open protocols
-    bs->CloseProtocol(lip->DeviceHandle,
-                      &sfsp_guid,
-                      image,
-                      NULL);
-
-    bs->CloseProtocol(image,
-                      &lip_guid,
-                      image,
-                      NULL);
-
+    done:
+    if (dirp) dirp->Close(dirp);    // Cleanup directory pointer
     return status;
 }
 
@@ -1069,41 +1037,12 @@ EFI_STATUS print_block_io_partitions(void) {
     EFI_HANDLE *handle_buffer = NULL;
 
     // Get media ID for this disk image first, to compare to others in output
-    EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-    EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
-    status = bs->OpenProtocol(image,
-                              &lip_guid,
-                              (VOID **)&lip,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+    UINT32 this_image_media_id = 0;
+    status = get_disk_image_mediaID(&this_image_media_id);
     if (EFI_ERROR(status)) {
-        error(status, u"Could not open Loaded Image Protocol\r\n");
+        error(status, u"Could not get disk image media ID.\r\n");
         return status;
     }
-
-    status = bs->OpenProtocol(lip->DeviceHandle,
-                              &bio_guid,
-                              (VOID **)&biop,
-                              image,
-                              NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
-    if (EFI_ERROR(status)) {
-        error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
-        return status;
-    }
-
-    UINT32 this_image_media_id = biop->Media->MediaId;  // Media ID for this running disk image itself
-
-    // Close open protocols when done
-    bs->CloseProtocol(lip->DeviceHandle,
-                      &bio_guid,
-                      image,
-                      NULL);
-    bs->CloseProtocol(image,
-                      &lip_guid,
-                      image,
-                      NULL);
 
     // Loop through and print all partition information found
     status = bs->LocateHandleBuffer(ByProtocol, &bio_guid, NULL, &num_handles, &handle_buffer);
@@ -1119,7 +1058,7 @@ EFI_STATUS print_block_io_partitions(void) {
                                   (VOID **)&biop,
                                   image,
                                   NULL,
-                                  EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                                  EFI_OPEN_PROTOCOL_GET_PROTOCOL);
 
         if (EFI_ERROR(status)) {
             error(status, u"Could not Open Block IO protocol on handle %u.\r\n", i);
@@ -1136,10 +1075,6 @@ EFI_STATUS print_block_io_partitions(void) {
 
         if (biop->Media->LastBlock == 0) {
             // Only really care about partitions/disks above 1 block in size
-            bs->CloseProtocol(handle_buffer[i],
-                              &bio_guid,
-                              image,
-                              NULL);
             continue;
         }
 
@@ -1170,7 +1105,7 @@ EFI_STATUS print_block_io_partitions(void) {
                                       (VOID **)&pip,
                                       image,
                                       NULL,
-                                      EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                                      EFI_OPEN_PROTOCOL_GET_PROTOCOL);
 
             if (EFI_ERROR(status)) {
                 error(status, u"Could not Open Partition Info protocol on handle %u.\r\n", i);
@@ -1190,12 +1125,6 @@ EFI_STATUS print_block_io_partitions(void) {
                 }
             }
         }
-
-        // Close open protocol when done
-        bs->CloseProtocol(handle_buffer[i],
-                          &bio_guid,
-                          image,
-                          NULL);
 
         printf_c16(u"\r\n");    // Separate each block of text visually 
     }
@@ -2592,7 +2521,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             printf_c16(u"\r\n%s", menu_choices[i]);
 
         // Get cursor row boundaries
-        INTN min_row = 0, max_row = cout->Mode->CursorRow;
+        INTN max_row = cout->Mode->CursorRow;
 
         // Input loop
         cout->SetCursorPosition(cout, 0, 0);
@@ -2604,33 +2533,17 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             // Process input
             switch (key.ScanCode) {
                 case SCANCODE_UP_ARROW:
-                    // De-highlight current row, move up 1 row, highlight new row
-                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                    printf_c16(u"%s\r", menu_choices[current_row]);
-
-                    if (current_row-1 >= min_row)  
-                        current_row--;          // Go up one row
-                    else
-                        current_row = max_row;  // Wrap around to bottom of menu 
-
-                    cout->SetCursorPosition(cout, 0, current_row);
-                    cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-                    printf_c16(u"%s\r", menu_choices[current_row]);
-
-                    // Reset colors
-                    cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-                    break;
-
                 case SCANCODE_DOWN_ARROW:
-                    // De-highlight current row, move down 1 row, highlight new row
+                    // De-highlight current row 
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
                     printf_c16(u"%s\r", menu_choices[current_row]);
 
-                    if (current_row+1 <= max_row) 
-                        current_row++;          // Go down one row
-                    else
-                        current_row = min_row;  // Wrap around to top of menu
+                    // Go up or down 1 row in range [0:max_row] (circular buffer)
+                    current_row = (key.ScanCode == SCANCODE_UP_ARROW) 
+                                  ? (current_row + max_row) % (max_row+1)
+                                  : (current_row+1) % (max_row+1);  
 
+                    // Highlight new current row
                     cout->SetCursorPosition(cout, 0, current_row);
                     cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
                     printf_c16(u"%s\r", menu_choices[current_row]);

@@ -318,6 +318,16 @@ UINTN strlen(char *s) {
 }
 
 // =====================================================================
+// (CHAR16) strlen:
+// Returns: length of string not including NULL terminator
+// =====================================================================
+UINTN strlen_c16(CHAR16 *s) {
+    UINTN len = 0;
+    while (*s++) len++;
+    return len;
+}
+
+// =====================================================================
 // (ASCII) strstr:
 // Return a pointer to the beginning of the located
 //   substring, or NULL if the substring is not found.
@@ -396,6 +406,24 @@ char *strrev(char *s) {
     char *start = s, *end = s + strlen(s)-1;
     while (start < end) {
         char temp = *end;  // Swap
+        *end-- = *start;
+        *start++ = temp;
+    }
+
+    return s;
+}
+
+// ======================================================
+// (CHAR16) strrev:
+//  Reverse a string.
+//  Returns reversed string.
+// ======================================================
+CHAR16 *strrev_c16(CHAR16 *s) {
+    if (!s) return s;
+
+    CHAR16 *start = s, *end = s + strlen_c16(s)-1;
+    while (start < end) {
+        CHAR16 temp = *end;  // Swap
         *end-- = *start;
         *start++ = temp;
     }
@@ -635,12 +663,7 @@ add_int_to_buf_c16(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digit
     buffer[i--] = u'\0';
 
     // Reverse buffer to read left to right
-    for (UINTN j = 0; j < i; j++, i--) {
-        // Swap digits
-        UINTN temp = buffer[i];
-        buffer[i] = buffer[j];
-        buffer[j] = temp;
-    }
+    strrev_c16(buffer);
 
     // Add number string to input buffer for printing
     for (CHAR16 *p = buffer; *p; p++) {
@@ -907,10 +930,12 @@ bool format_string_c16(CHAR16 *buf, CHAR16 *fmt, va_list args) {
             if (double_num) {
                 // Number conversion: Float/Double
                 double number = va_arg(args, double);
-                UINTN whole_num = 0;
+                INTN whole_num = 0;
 
                 // Get digits before decimal point
-                whole_num = (UINTN)number;
+                whole_num = (INTN)number;
+                if (whole_num < 0) whole_num = -whole_num;
+
                 UINTN num_digits = 0;
                 do {
                    num_digits++; 
@@ -925,16 +950,15 @@ bool format_string_c16(CHAR16 *buf, CHAR16 *fmt, va_list args) {
                 if (!input_precision || precision != 0) {
                     buf[buf_idx++] = u'.';      // Add decimal point
 
-                    whole_num = (UINTN)number;  // Get only digits before decimal
                     if (number < 0.0) number = -number; // Ensure number is positive
-                    number -= whole_num;        // Get only decimal digits
+                    whole_num = (INTN)number;
+                    number -= whole_num;                // Get only decimal digits
+                    signed_num = FALSE;                 // Don't print negative sign for decimals
 
                     // Move precision # of decimal digits before decimal point 
                     //   using base 10, number = number * 10^precision
                     for (UINTN i = 0; i < precision; i++)
                         number *= 10;
-
-                    whole_num = (UINTN)number;  // Get only digits before decimal
 
                     // Add digits to write buffer
                     add_int_to_buf_c16(number, base, signed_num, precision, buf, &buf_idx);
@@ -1049,12 +1073,7 @@ add_int_to_buf(UINTN number, UINT8 base, BOOLEAN signed_num, UINTN min_digits, c
     buffer[i--] = u'\0';
 
     // Reverse buffer to read left to right
-    for (UINTN j = 0; j < i; j++, i--) {
-        // Swap digits
-        UINTN temp = buffer[i];
-        buffer[i] = buffer[j];
-        buffer[j] = temp;
-    }
+    strrev(buffer);
 
     // Add number string to input buffer for printing
     for (char *p = buffer; *p; p++) {
@@ -1336,9 +1355,11 @@ bool format_string(char *buf, char *fmt, va_list args) {
                 if (!input_precision || precision != 0) {
                     buf[buf_idx++] = u'.';      // Add decimal point
 
-                    whole_num = (UINTN)number;  // Get only digits before decimal
+                    whole_num = (UINTN)number;          // Get only digits before decimal
                     if (number < 0.0) number = -number; // Ensure number is positive
-                    number -= whole_num;        // Get only decimal digits
+                    signed_num = FALSE;                 // Don't print negative decimal digits
+
+                    number -= whole_num;                // Get only decimal digits
 
                     // Move precision # of decimal digits before decimal point 
                     //   using base 10, number = number * 10^precision
@@ -1813,6 +1834,8 @@ read_disk_lbas_to_buffer(EFI_LBA disk_lba, UINTN data_size, UINT32 disk_mediaID,
         error(status, u"Could not read Disk LBAs into buffer.\r\n");
 
     done:
+    if (handle_buffer) bs->FreePool(handle_buffer);   // Free allocated handle buffer
+
     return buffer;
 }
 
@@ -2001,9 +2024,6 @@ EFI_STATUS check_gop_mode(UINT32 *ret_mode, UINT32 xres, UINT32 yres) {
 EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
     EFI_STATUS status = EFI_SUCCESS;
 
-    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
-    EFI_BLOCK_IO_PROTOCOL *biop = NULL;
-
     // Get media ID for this disk image 
     EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_LOADED_IMAGE_PROTOCOL *lip = NULL;
@@ -2012,19 +2032,21 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
                               (VOID **)&lip,
                               image,
                               NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                              EFI_OPEN_PROTOCOL_GET_PROTOCOL);
     if (EFI_ERROR(status)) {
         error(status, u"Could not open Loaded Image Protocol\r\n");
         goto done;
     }
 
     // Get Block IO protocol for loaded image's device handle
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_BLOCK_IO_PROTOCOL *biop = NULL;
     status = bs->OpenProtocol(lip->DeviceHandle,
                               &bio_guid,
                               (VOID **)&biop,
                               image,
                               NULL,
-                              EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+                              EFI_OPEN_PROTOCOL_GET_PROTOCOL);
     if (EFI_ERROR(status)) {
         error(status, u"Could not open Block IO Protocol for this loaded image.\r\n");
         goto done;
@@ -2033,10 +2055,6 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
     *mediaID = biop->Media->MediaId;  // Media ID for this running disk image itself
 
     done:
-    // Close open protocols 
-    if (biop) bs->CloseProtocol(lip->DeviceHandle, &bio_guid, image, NULL);
-    if (lip)  bs->CloseProtocol(image, &lip_guid, image, NULL);
-
     return status;
 }
 
