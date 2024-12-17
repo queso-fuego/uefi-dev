@@ -2228,7 +2228,7 @@ EFI_STATUS write_to_another_disk(void) {
     }
 
     // Get size of disk image from file 
-    CHAR16 *file_name = u"\\EFI\\BOOT\\DSKIMG.INF";
+    CHAR16 *file_name = u"\\EFI\\BOOT\\FILE.TXT";
     UINTN buf_size = 0;
     VOID *file_buffer = NULL;
     file_buffer = read_esp_file_to_buffer(file_name, &buf_size);
@@ -2239,7 +2239,7 @@ EFI_STATUS write_to_another_disk(void) {
 
     char *str_pos = strstr(file_buffer, "DISK_SIZE=");
     if (!str_pos) {
-        error(0, u"Could not find disk image size in DSKIMG.INF\r\n");
+        error(0, u"Could not find disk image size in FILE.TXT\r\n");
         return 1;
     }
 

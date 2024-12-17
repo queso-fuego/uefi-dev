@@ -2060,7 +2060,7 @@ EFI_STATUS get_disk_image_mediaID(UINT32 *mediaID) {
 
 // ===============================================================
 // Read a file in the GPT disk image's raw data partition,
-//   using information found in the DATAFLS.INF file in the ESP,
+//   using information found in the FILE.TXT file in the ESP,
 //   created when making the disk image.
 //
 // Returns: 
@@ -2085,8 +2085,8 @@ VOID *read_data_partition_file_to_buffer(char *in_name, bool executable, UINTN *
         goto cleanup;
     }
 
-    // Get DATAFLS.INF file from path "/EFI/BOOT/DATAFLS.INF"
-    CHAR16 *file_name = u"\\EFI\\BOOT\\DATAFLS.INF";
+    // Get FILE.TXT file from path "/EFI/BOOT/FILE.TXT"
+    CHAR16 *file_name = u"\\EFI\\BOOT\\FILE.TXT";
     UINTN buf_size = 0;
     esp_file = read_esp_file_to_buffer(file_name, &buf_size);
     if (!esp_file) {
@@ -2094,7 +2094,7 @@ VOID *read_data_partition_file_to_buffer(char *in_name, bool executable, UINTN *
         goto cleanup;
     }
 
-    // Get disk LBA and file size from DATAFLS.INF for input file name 
+    // Get disk LBA and file size from FILE.TXT for input file name 
     char *str_pos = stpstr(esp_file, in_name);
     if (!str_pos) {
         error(0, u"Could not find file '%s' in data partition\r\n", in_name);
