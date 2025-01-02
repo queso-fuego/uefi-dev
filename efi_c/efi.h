@@ -69,6 +69,10 @@ typedef UINT64 EFI_VIRTUAL_ADDRESS;
 #define SCANCODE_DOWN_ARROW 0x2
 #define SCANCODE_ESC        0x17
 
+#define EFI_SIMPLE_NETWORK_PROTOCOL_GUID \
+{0xA1983289,0xAC25,0x11D3,\
+0x9A,0x2D,{0x00,0x90,0x27,0x3F,0xC1,0x4D}}
+
 // -----------------------------------
 // Misc. EFI GUIDs
 // -----------------------------------
@@ -195,6 +199,26 @@ const CHAR16 *EFI_ERROR_STRINGS[MAX_EFI_ERROR] = {
     [14] = u"EFI_NOT_FOUND",
     [27] = u"EFI_CRC_ERROR",
 };
+
+// EFI_SIMPLE_NETWORK_PROTOCOL
+typedef struct EFI_SIMPLE_NETWORK_PROTOCOL {
+  UINT64                                    Revision;
+  EFI_SIMPLE_NETWORK_START                  Start;
+  EFI_SIMPLE_NETWORK_STOP                   Stop;
+  EFI_SIMPLE_NETWORK_INITIALIZE             Initialize;
+  EFI_SIMPLE_NETWORK_RESET                  Reset;
+  EFI_SIMPLE_NETWORK_SHUTDOWN               Shutdown;
+  EFI_SIMPLE_NETWORK_RECEIVE_FILTERS        ReceiveFilters;
+  EFI_SIMPLE_NETWORK_STATION_ADDRESS        StationAddress;
+  EFI_SIMPLE_NETWORK_STATISTICS             Statistics;
+  EFI_SIMPLE_NETWORK_MCAST_IP_TO_MAC        MCastIpToMac;
+  EFI_SIMPLE_NETWORK_NVDATA                 NvData;
+  EFI_SIMPLE_NETWORK_GET_STATUS             GetStatus;
+  EFI_SIMPLE_NETWORK_TRANSMIT               Transmit;
+  EFI_SIMPLE_NETWORK_RECEIVE                Receive;
+  EFI_EVENT                                 WaitForPacket;
+  EFI_SIMPLE_NETWORK_MODE*                  Mode;
+} EFI_SIMPLE_NETWORK_PROTOCOL;
 
 // EFI_GRAPHICS_OUTPUT_PROTOCOL
 typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL EFI_GRAPHICS_OUTPUT_PROTOCOL;
