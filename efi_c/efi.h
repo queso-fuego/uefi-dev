@@ -201,6 +201,15 @@ const CHAR16 *EFI_ERROR_STRINGS[MAX_EFI_ERROR] = {
 };
 
 // EFI_SIMPLE_NETWORK_PROTOCOL
+typdef enum {
+  EfiSimpleNetworkStopped,
+  EfiSimpleNetworkStarted,
+  EfiSimpleNetworkInitialized,
+  EfiSimpleNetworkMaxState
+} EFI_SIMPLE_NETWORK_STATE;
+
+#define MAX_MCAST_FILTER_CNT                16
+
 typedef struct {
   UINT32                                    State;
   UINT32                                    HwAddressSize;
@@ -222,6 +231,12 @@ typedef struct {
   BOOLEAN                                   MediaPresentSupported;
   BOOLEAN                                   MediaPresent;
 } EFI_SIMPLE_NETWORK_MODE;
+
+#define EFI_SIMPLE_NETWORK_RECEIVE_UNICAST               0x01
+#define EFI_SIMPLE_NETWORK_RECEIVE_MULTICAST             0x02
+#define EFI_SIMPLE_NETWORK_RECEIVE_BROADCAST             0x04
+#define EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS           0x08
+#define EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS_MULTICAST 0x10
 
 typedef struct EFI_SIMPLE_NETWORK_PROTOCOL {
   UINT64                                    Revision;
