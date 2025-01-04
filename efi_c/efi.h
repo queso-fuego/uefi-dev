@@ -291,6 +291,44 @@ EFI_STATUS
 #define EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS           0x08
 #define EFI_SIMPLE_NETWORK_RECEIVE_PROMISCUOUS_MULTICAST 0x10
 
+typedef struct {
+  UINT64    RxTotalFrames;
+  UINT64    RxGoodFrames;
+  UINT64    RxUndersizeFrames;
+  UINT64    RxOversizeFrames;
+  UINT64    RxDroppedFrames;
+  UINT64    RxUnicastFrames;
+  UINT64    RxBroadcastFrames;
+  UINT64    RxMulticastFrames;
+  UINT64    RxCrcErrorFrames;
+  UINT64    RxTotalBytes;
+  UINT64    TxTotalFrames;
+  UINT64    TxGoodFrames;
+  UINT64    TxUndersizeFrames;
+  UINT64    TxOversizeFrames;
+  UINT64    TxDroppedFrames;
+  UINT64    TxUnicastFrames;
+  UINT64    TxBroadcastFrames;
+  UINT64    TxMulticastFrames;
+  UINT64    TxCrcErrorFrames;
+  UINT64    TxTotalBytes;
+  UINT64    Collisions;
+  UINT64    UnsupportedProtocol;
+  UINT64    RxDuplicatedFrames;
+  UINT64    RxDecryptErrorFrames;
+  UINT64    TxErrorFrames;
+  UINT64    TxRetryFrames;
+} EFI_NETWORK_STATISTICS;
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_STATISTICS) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN BOOLEAN                                Reset,
+  IN OUT UINTN*                             StatisticsSize OPTIONAL,
+  OUT EFI_NETWORK_STATISTICS*               StatisticsTable OPTIONAL
+);
+
 typedef struct EFI_SIMPLE_NETWORK_PROTOCOL {
   UINT64                                    Revision;
   EFI_SIMPLE_NETWORK_START                  Start;
