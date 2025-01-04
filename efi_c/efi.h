@@ -329,6 +329,57 @@ EFI_STATUS
   OUT EFI_NETWORK_STATISTICS*               StatisticsTable OPTIONAL
 );
 
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_MCAST_IP_TO_MAC) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN BOOLEAN                                IPv6,
+  IN EFI_IP_ADDRESS*                        IP,
+  OUT EFI_MAC_ADDRESS*                      MAC
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_NVDATA) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN BOOLEAN                                ReadWrite,
+  IN UINTN                                  Offset,
+  IN UINTN                                  BufferSize,
+  IN OUT VOID*                              Buffer
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_GET_STATUS) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  OUT UINT32*                               InterruptStatus OPTIONAL,
+  OUT VOID**                                TxBuf OPTIONAL
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_TRANSMIT) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN UINTN                                  HeaderSize,
+  IN UINTN                                  BufferSize,
+  IN VOID*                                  Buffer,
+  IN EFI_MAC_ADDRESS*                       SrcAddr OPTIONAL,
+  IN EFI_MAC_ADDRESS*                       DestAddr OPTIONAL,
+  IN UINT16*                                Protocol OPTIONAL
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_RECEIVE) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  OUT UINTN*                                HeaderSize OPTIONAL,
+  IN OUT UINTN*                             BufferSize,
+  OUT VOID*                                 Buffer,
+  OUT EFI_MAC_ADDRESS*                      SrcAddr OPTIONAL,
+  OUT EFI_MAC_ADDRESS*                      DestAddr OPTIONAL,
+  OUT UINT16*                               Protocol OPTIONAL
+);
+
 typedef struct EFI_SIMPLE_NETWORK_PROTOCOL {
   UINT64                                    Revision;
   EFI_SIMPLE_NETWORK_START                  Start;
