@@ -201,7 +201,7 @@ const CHAR16 *EFI_ERROR_STRINGS[MAX_EFI_ERROR] = {
 };
 
 // EFI_SIMPLE_NETWORK_PROTOCOL
-typdef enum {
+typedef enum {
   EfiSimpleNetworkStopped,
   EfiSimpleNetworkStarted,
   EfiSimpleNetworkInitialized,

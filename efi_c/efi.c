@@ -799,6 +799,22 @@ EFI_STATUS test_mouse(void) {
     return EFI_SUCCESS;
 }
 
+EFI_STATUS test_network() {
+    cout->ClearScreen(cout);
+
+    EFI_GUID netGuid = EFI_SIMPLE_NETWORK_PROTOCOL_GUID;
+    EFI_SIMPLE_NETWORK_PROTOCOL* netProtocol;
+    EFI_STATUS status = bs->LocateProtocol(&netGuid, NULL, (VOID**)&netProtocol);
+    if(EFI_ERROR(status)) {
+        printf_c16(u"ERROR: Network protocol(s) not found.\r\n");
+    }
+    else {
+        printf_c16(u"Network protocol(s) found.\r\n");
+    }
+    get_key();
+    return status;
+}
+
 // ===========================================================
 // Timer function to print current date/time every 1 second
 // ===========================================================
@@ -2448,6 +2464,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Print Configuration Tables",
         u"Print ACPI Tables",
         u"Print EFI Global Variables",
+        u"Test Network",
         u"Load Kernel",
         u"Change Boot Variables",
         u"Write Disk Image Image To Other Disk",
@@ -2465,6 +2482,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         print_config_tables,
         print_acpi_tables,
         print_efi_global_variables,
+        test_network,
         load_kernel,
         change_boot_variables,
         write_to_another_disk,
