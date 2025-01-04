@@ -201,6 +201,7 @@ const CHAR16 *EFI_ERROR_STRINGS[MAX_EFI_ERROR] = {
 };
 
 // EFI_SIMPLE_NETWORK_PROTOCOL
+typedef struct EFI_SIMPLE_NETWORK_PROTOCOL EFI_SIMPLE_NETWORK_PROTOCOL;
 typedef enum {
   EfiSimpleNetworkStopped,
   EfiSimpleNetworkStarted,
@@ -231,6 +232,58 @@ typedef struct {
   BOOLEAN                                   MediaPresentSupported;
   BOOLEAN                                   MediaPresent;
 } EFI_SIMPLE_NETWORK_MODE;
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_START) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_STOP) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_INITIALIZE) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN UINTN                                  ExtraRxBufferSize OPTIONAL,
+  IN UINTN                                  ExtraTxBufferSize OPTIONAL
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_RESET) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN BOOLEAN                                ExtendedVerification
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_SHUTDOWN) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_RECEIVE_FILTERS) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN UINT32                                 Enable,
+  IN UINT32                                 Disable,
+  IN BOOLEAN                                ResetMCastFilter,
+  IN UINTN                                  MCastFilterCnt OPTIONAL,
+  IN EFI_MAC_ADDRESS                        MCastFilter OPTIONAL
+);
+
+typedef
+EFI_STATUS
+(EFIAPI* EFI_SIMPLE_NETWORK_STATION_ADDRESS) (
+  IN EFI_SIMPLE_NETWORK_PROTOCOL*           This,
+  IN BOOLEAN                                Reset,
+  IN EFI_MAC_ADDRESS*                       New OPTIONAL
+);
 
 #define EFI_SIMPLE_NETWORK_RECEIVE_UNICAST               0x01
 #define EFI_SIMPLE_NETWORK_RECEIVE_MULTICAST             0x02
