@@ -202,6 +202,20 @@ const CHAR16 *EFI_ERROR_STRINGS[MAX_EFI_ERROR] = {
 
 // EFI_SIMPLE_NETWORK_PROTOCOL
 typedef struct EFI_SIMPLE_NETWORK_PROTOCOL EFI_SIMPLE_NETWORK_PROTOCOL;
+typedef struct {
+  UINT8                                     Addr[32];
+} EFI_MAC_ADDRESS;
+typedef struct {
+  UINT8                                     Addr[4];
+} EFI_IPv4_ADDRESS;
+typedef struct {
+  UINT8                                     Addr[16];
+} EFI_IPv6_ADDRESS;
+typedef union {
+  UINT32                                    Addr[4];
+  EFI_IPv4_ADDRESS                          v4;
+  EFI_IPv6_ADDRESS                          v6;
+} EFI_IP_ADDRESS;
 typedef enum {
   EfiSimpleNetworkStopped,
   EfiSimpleNetworkStarted,
