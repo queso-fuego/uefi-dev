@@ -799,7 +799,10 @@ EFI_STATUS test_mouse(void) {
     return EFI_SUCCESS;
 }
 
-EFI_STATUS test_network() {
+// =====================================================
+// Test if EFI_SIMPLE_NETWORK_PROTOCOL is found or not
+// =====================================================
+EFI_STATUS test_network(void) {
     cout->ClearScreen(cout);
 
     EFI_GUID netGuid = EFI_SIMPLE_NETWORK_PROTOCOL_GUID;
@@ -2458,13 +2461,13 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Set Text Mode",
         u"Set Graphics Mode",
         u"Test Mouse",
+        u"Test Network",
         u"Read ESP Files",
         u"Print Block IO Partitions",
         u"Print Memory Map",
         u"Print Configuration Tables",
         u"Print ACPI Tables",
         u"Print EFI Global Variables",
-        u"Test Network",
         u"Load Kernel",
         u"Change Boot Variables",
         u"Write Disk Image Image To Other Disk",
@@ -2476,13 +2479,13 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         set_text_mode,
         set_graphics_mode,
         test_mouse,
+        test_network,
         read_esp_files,
         print_block_io_partitions,
         print_memory_map,
         print_config_tables,
         print_acpi_tables,
         print_efi_global_variables,
-        test_network,
         load_kernel,
         change_boot_variables,
         write_to_another_disk,
