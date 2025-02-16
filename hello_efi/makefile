@@ -25,11 +25,19 @@ CFLAGS = \
 	-ffreestanding \
 	-nostdlib 
 
-all: $(TARGET)
+DISK_IMG_FOLDER = ../UEFI-GPT-image-creator
+DISK_IMG_PGM    = write_gpt
+
+all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(TARGET)
+	cd $(DISK_IMG_FOLDER) && ./qemu.sh
+
+$(DISK_IMG_FOLDER)/$(DISK_IMG_PGM):
+	cd $(DISK_IMG_FOLDER) && $(MAKE)
 
 $(TARGET): $(SOURCE)
 	$(CC) $(CFLAGS) -o $@ $<
-	cp $(TARGET) ../UEFI-GPT-image-creator/
+	cp $(TARGET) $(DISK_IMG_FOLDER); \
+	cd $(DISK_IMG_FOLDER) && ./$(DISK_IMG_PGM)
 
 clean:
 	rm -rf $(TARGET)
