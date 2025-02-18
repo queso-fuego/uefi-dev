@@ -7,16 +7,15 @@ ARCH 	?= x86_64
 MACHINE ?= unknown
 
 ifeq ($(OS), Windows_NT)
-HOST_OS ::= Windows
+HOST_OS     ::= Windows
+QEMU_SCRIPT ::= qemu_$(ARCH).bat
 else
-HOST_OS ::= Linux
+HOST_OS     ::= Linux
+QEMU_SCRIPT ::= ./qemu_$(ARCH).sh
 endif
 
 # Uncomment disk image program & shell script 
-#DISK_IMG_PGM ::= write_gpt.exe		# Windows
-#QEMU_SCRIPT  ::= qemu.bat			# Windows
-DISK_IMG_PGM ::= write_gpt			# Linux
-QEMU_SCRIPT	 ::= qemu_$(ARCH).sh	# Linux
+DISK_IMG_PGM ::= write_gpt
 
 DISK_IMG_FOLDER ::= ../UEFI-GPT-image-creator/
 
@@ -96,7 +95,7 @@ ADD_KERNEL = \
 					  -ad ../efi_c/$(KERNEL) ../efi_c/$(FONT);
 
 all: $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM) $(OVMF) $(EFI_APP) $(KERNEL) 
-	./$(QEMU_SCRIPT)
+	$(QEMU_SCRIPT)
 
 $(DISK_IMG_FOLDER)/$(DISK_IMG_PGM):
 	cd $(DISK_IMG_FOLDER) && $(MAKE) 
