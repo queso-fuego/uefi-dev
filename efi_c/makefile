@@ -7,50 +7,50 @@ ARCH 	?= x86_64
 MACHINE ?= unknown
 
 ifeq ($(OS), Windows_NT)
-HOST_OS     ::= Windows
-QEMU_SCRIPT ::= qemu_$(ARCH).bat
+HOST_OS     = Windows
+QEMU_SCRIPT = qemu_$(ARCH).bat
 else
-HOST_OS     ::= Linux
-QEMU_SCRIPT ::= ./qemu_$(ARCH).sh
+HOST_OS     = Linux
+QEMU_SCRIPT = ./qemu_$(ARCH).sh
 endif
 
 # Uncomment disk image program & shell script 
-DISK_IMG_PGM ::= write_gpt
+DISK_IMG_PGM = write_gpt
 
-DISK_IMG_FOLDER ::= ../UEFI-GPT-image-creator/
+DISK_IMG_FOLDER = ../UEFI-GPT-image-creator/
 
 ifeq ($(ARCH), x86_64)
-OVMF ::= $(DISK_IMG_FOLDER)bios64.bin
+OVMF = $(DISK_IMG_FOLDER)bios64.bin
 endif
 ifeq ($(ARCH), aarch64)
-OVMF ::= QEMU_EFI_AARCH64.raw
+OVMF = QEMU_EFI_AARCH64.raw
 endif
 
 # Uncomment CC/LDFLAGS for EFI object - gcc
-#EFICC       ::= $(ARCH)-w64-mingw32-gcc
-#EFI_LDFLAGS ::= \
+#EFICC       = $(ARCH)-w64-mingw32-gcc
+#EFI_LDFLAGS = \
 	-nostdlib \
 	-Wl,--subsystem,10 \
 	-e efi_main 
 
 # Uncomment CC/LDFLAGS for EFI object - clang
-EFICC       ::= clang -target $(ARCH)-$(MACHINE)-windows 
-EFI_LDFLAGS ::= \
+EFICC       = clang -target $(ARCH)-$(MACHINE)-windows 
+EFI_LDFLAGS = \
 	-nostdlib \
 	-fuse-ld=lld-link \
 	-Wl,-subsystem:efi_application \
 	-Wl,-entry:efi_main
 
 # ELF files
-ELFCC ::= clang -target $(ARCH)-$(MACHINE)-elf 
-ELFLD ::= ld.lld
+ELFCC = clang -target $(ARCH)-$(MACHINE)-elf 
+ELFLD = ld.lld
 
 # PE32+ files
-PECC  ::= $(ARCH)-w64-mingw32-gcc
-PELD  ::= $(ARCH)-w64-mingw32-ld
+PECC  = $(ARCH)-w64-mingw32-gcc
+PELD  = $(ARCH)-w64-mingw32-ld
 
 # Common CFLAGS
-CFLAGS ::= \
+CFLAGS = \
 	-std=c17 \
 	-MMD \
 	-Wall \
@@ -64,13 +64,13 @@ CFLAGS ::= \
 # -I include for "#include <arch/ARCH/ARCH.h>" or other files under top level "include" directory
 CFLAGS += -D ARCH=$(ARCH) -D MACHINE=$(MACHINE) -I include
 
-KERNEL_SRC     ::= kernel.c
-KERNEL_CFLAGS  ::= $(CFLAGS) -fPIE
-KERNEL_LDFLAGS ::= -e kmain -nostdlib -pie
+KERNEL_SRC     = kernel.c
+KERNEL_CFLAGS  = $(CFLAGS) -fPIE
+KERNEL_LDFLAGS = -e kmain -nostdlib -pie
 
-EFISRC  ::= efi.c
-EFIOBJ  ::= $(EFISRC:%.c=%_$(ARCH).o)
-DEPENDS ::= $(EFIOBJ:.o=.d) $(KERNEL_SRC:.c=.d)
+EFISRC  = efi.c
+EFIOBJ  = $(EFISRC:%.c=%_$(ARCH).o)
+DEPENDS = $(EFIOBJ:.o=.d) $(KERNEL_SRC:.c=.d)
 
 # EFI application to use, should automatically boot from UEFI/OVMF if in /EFI/BOOT/ folder in 
 #  the EFI System Partition (ESP)
@@ -81,12 +81,12 @@ EFI_APP ::= BOOTAA64.EFI
 endif
 
 # Uncomment kernel binary format to build
-KERNEL ::= kernel.elf    # ELF64 PIE kernel binary
-#KERNEL ::= kernel.pe     # PE32+ PIE kernel binary
-#KERNEL ::= kernel.binelf # Flat binary PIE kernel from ELF file
-#KERNEL ::= kernel.binpe  # Flat binary PIE kernel from PE file
+KERNEL = kernel.elf    # ELF64 PIE kernel binary
+#KERNEL = kernel.pe     # PE32+ PIE kernel binary
+#KERNEL = kernel.binelf # Flat binary PIE kernel from ELF file
+#KERNEL = kernel.binpe  # Flat binary PIE kernel from PE file
 
-FONT ::= ter-132n.psf	# PSF2 Bitmapped Font: Terminus 16x32 ISO8859-1
+FONT = ter-132n.psf	# PSF2 Bitmapped Font: Terminus 16x32 ISO8859-1
 
 # Add kernel binary to new disk image
 ADD_KERNEL = \
