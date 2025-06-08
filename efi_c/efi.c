@@ -2489,7 +2489,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         u"Print EFI Global Variables",
         u"Load Kernel",
         u"Change Boot Variables",
-        u"Write Disk Image Image To Other Disk",
+        u"Write Disk Image To Other Disk",
         u"Install Bootloader & Autoload Kernel",
     };
 
