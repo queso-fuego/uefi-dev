@@ -123,11 +123,10 @@ EFI_STATUS set_text_mode(void) {
 
         for (UINT32 i = 0; i < ARRAY_SIZE(text_modes) && i < max; i++) {
             cout->QueryMode(cout, i, &text_modes[i].cols, &text_modes[i].rows);
-	    // If invalid, get the next valid mode
+	    // If rows/cols are invalid, get the next valid mode
 	    UINT32 j = i;
-	    while ((!text_modes[j].cols      || !text_modes[j].rows     ) ||
-	           (text_modes[j].cols > 999 || text_modes[j].rows > 999)) {
-
+	    while ((text_modes[j].cols < 10 || text_modes[j].cols > 999) || 
+	           (text_modes[j].rows < 10 || text_modes[j].rows > 999)) {
 		cout->QueryMode(cout, ++i, &text_modes[j].cols, &text_modes[j].rows);
 		menu_bottom--;
 		max--;
@@ -138,13 +137,13 @@ EFI_STATUS set_text_mode(void) {
 
         // Highlight top menu row to start off
         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
-        printf_c16(u"Mode %d: %dx%d", 
+        printf_c16(u"Mode %d: %llux%llu", 
 		   text_modes[0].mode, text_modes[0].cols, text_modes[0].rows);
 
         // Print other text mode infos
         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
         for (UINT32 i = 1; i < menu_len + 1; i++) 
-            printf_c16(u"\r\nMode %d: %dx%d", 
+            printf_c16(u"\r\nMode %d: %llux%llu", 
 		       text_modes[i].mode, text_modes[i].cols, text_modes[i].rows);
 
         // Get input from user
