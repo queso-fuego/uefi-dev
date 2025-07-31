@@ -105,44 +105,44 @@ EFI_STATUS set_text_mode(void) {
 
         printf_c16(u"Available text modes:\r\n");
 
-        UINTN menu_top = cout->Mode->CursorRow, menu_bottom = max_rows;
+        UINTN menu_top = cout->Mode->CursorRow;
 
         // Print keybinds at bottom of screen
-        cout->SetCursorPosition(cout, 0, menu_bottom-3);
+        cout->SetCursorPosition(cout, 0, max_rows-3);
         printf_c16(u"Up/Down Arrow = Move Cursor\r\n"
                u"Enter = Select\r\n"
                u"Escape = Go Back");
 
-        cout->SetCursorPosition(cout, 0, menu_top);
-        menu_bottom -= 5;   // Bottom of menu will be 2 rows above keybinds
-        UINTN menu_len = menu_bottom - menu_top;
+        UINTN menu_bottom = max_rows-5;	// Stop above keybind text (0-based offset)
 
-        // Get all available Text modes' info
+        // Get all valid text modes' info
+	// NOTE: Max valid GOP mode is ModeMax-1 per UEFI spec
         UINT32 max = cout->Mode->MaxMode;
-        if (max < menu_len) menu_bottom = menu_top + max-1; // Bound menu by actual # of modes
+	if (max-1 < menu_bottom - menu_top) menu_bottom = menu_top + max-1;
 
+	UINT32 num_modes = 0;
         for (UINT32 i = 0; i < ARRAY_SIZE(text_modes) && i < max; i++) {
-            cout->QueryMode(cout, i, &text_modes[i].cols, &text_modes[i].rows);
-	    // If rows/cols are invalid, get the next valid mode
-	    UINT32 j = i;
-	    while ((text_modes[j].cols < 10 || text_modes[j].cols > 999) || 
-	           (text_modes[j].rows < 10 || text_modes[j].rows > 999)) {
-		cout->QueryMode(cout, ++i, &text_modes[j].cols, &text_modes[j].rows);
-		menu_bottom--;
-		max--;
+	    // If mode is bad or rows/cols are invalid, go on
+            if (cout->QueryMode(cout, i, &text_modes[num_modes].cols, &text_modes[num_modes].rows) != EFI_SUCCESS || 
+	        ((text_modes[num_modes].cols < 10 || text_modes[num_modes].cols > 999) || 
+	         (text_modes[num_modes].rows < 10 || text_modes[num_modes].rows > 999))) {
+		continue;
 	    }
-	    text_modes[j].mode = i;
+	    text_modes[num_modes++].mode = i;
 	}
-	menu_len = menu_bottom - menu_top;  // Limit # of menu modes 
+
+	if (num_modes-1 < menu_bottom - menu_top) menu_bottom = menu_top + num_modes-1;
+	UINTN menu_len = menu_bottom - menu_top + 1;	// 1-based offset
 
         // Highlight top menu row to start off
+        cout->SetCursorPosition(cout, 0, menu_top);
         cout->SetAttribute(cout, EFI_TEXT_ATTR(HIGHLIGHT_FG_COLOR, HIGHLIGHT_BG_COLOR));
         printf_c16(u"Mode %d: %llux%llu", 
 		   text_modes[0].mode, text_modes[0].cols, text_modes[0].rows);
 
         // Print other text mode infos
         cout->SetAttribute(cout, EFI_TEXT_ATTR(DEFAULT_FG_COLOR, DEFAULT_BG_COLOR));
-        for (UINT32 i = 1; i < menu_len + 1; i++) 
+        for (UINT32 i = 1; i < menu_len; i++) 
             printf_c16(u"\r\nMode %d: %llux%llu", 
 		       text_modes[i].mode, text_modes[i].cols, text_modes[i].rows);
 
@@ -201,15 +201,12 @@ EFI_STATUS set_text_mode(void) {
                     break;
 
                 case SCANCODE_DOWN_ARROW:
-                    // NOTE: Max valid GOP mode is ModeMax-1 per UEFI spec
-                    if (current_row == menu_bottom && mode_index < max-1) {
-                        // Scroll menu down by incrementing all modes by 1
+                    if (current_row == menu_bottom && mode_index < num_modes-1) {
+                        // Not at bottom of modes yet, scroll menu down by incrementing all modes by 1
                         mode_index -= menu_len - 1;
 
-                        // Reset cursor to top of menu
-                        cout->SetCursorPosition(cout, 0, menu_top);
-
                         // Print modes up until the last menu row
+                        cout->SetCursorPosition(cout, 0, menu_top);
                         for (UINT32 i = 0; i < menu_len; i++, mode_index++) {
                             printf_c16(u"                    \r"    // Blank out mode text first
                                        u"Mode %d: %dx%d\r\n", 
